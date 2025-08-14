@@ -1,0 +1,140 @@
+# Cloud Build configuration for Agro Mas Backend
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/agro-mas-backend:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/agro-mas-backend:latest'
+      - '-f'
+      - 'deployments/Dockerfile'
+      - '.'
+    dir: '.'
+
+  # Step 2: Push the image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/agro-mas-backend:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/agro-mas-backend:latest'
+
+  # Step 3: Run database migrations (if needed)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Check if this is a production deployment
+        if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "production" ]]; then
+          echo "Running database migrations for production"
+          # Run migrations using Cloud SQL Proxy or Cloud Run Jobs
+          gcloud run jobs create agro-mas-migrate \
+            --image=gcr.io/$PROJECT_ID/agro-mas-backend:$COMMIT_SHA \
+            --region=us-central1 \
+            --set-env-vars="DB_HOST=${_DB_HOST},DB_USER=${_DB_USER},DB_NAME=${_DB_NAME}" \
+            --set-secrets="/secrets/db-password=agro-mas-db-password:latest" \
+            --command="./main" \
+            --args="migrate" \
+            --max-retries=3 \
+            --task-timeout=300 \
+            --parallelism=1 \
+            --replace || true
+          
+          # Execute the migration job
+          gcloud run jobs execute agro-mas-migrate --region=us-central1 --wait
+        fi
+
+  # Step 4: Deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'agro-mas-backend'
+      - '--image=gcr.io/$PROJECT_ID/agro-mas-backend:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=8080'
+      - '--memory=512Mi'
+      - '--cpu=0.5'
+      - '--min-instances=0'
+      - '--max-instances=5'
+      - '--concurrency=100'
+      - '--timeout=300'
+      - '--set-env-vars=ENVIRONMENT=production,GIN_MODE=release'
+      - '--set-secrets=/secrets/jwt-secret=agro-mas-jwt-secret:latest'
+      - '--set-secrets=/secrets/db-password=agro-mas-db-password:latest'
+      - '--set-cloudsql-instances=${_CLOUD_SQL_INSTANCE}'
+      - '--ingress=all'
+      - '--service-account=${_SERVICE_ACCOUNT}'
+
+  # Step 5: Apply traffic allocation (for blue-green deployments)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [[ "$BRANCH_NAME" == "main" ]]; then
+          echo "Deploying to production with traffic allocation"
+          # Initially route 10% traffic to new revision for canary deployment
+          gcloud run services update-traffic agro-mas-backend \
+            --to-revisions=LATEST=10 \
+            --region=us-central1
+          
+          # Wait for health checks and monitoring
+          sleep 60
+          
+          # If all good, route 100% traffic (this could be automated with monitoring)
+          gcloud run services update-traffic agro-mas-backend \
+            --to-latest \
+            --region=us-central1
+        else
+          echo "Non-production deployment - routing 100% traffic"
+          gcloud run services update-traffic agro-mas-backend \
+            --to-latest \
+            --region=us-central1
+        fi
+
+# Substitution variables (set in Cloud Build trigger or provided at build time)
+# Optimized for low-cost deployment (100 transactions/month)
+substitutions:
+  _DB_HOST: 'localhost'  # Cloud SQL public IP (no VPC connector needed)
+  _DB_USER: 'agro_mas_user'
+  _DB_NAME: 'agro_mas_prod'
+  _CLOUD_SQL_INSTANCE: 'rising-city-422302-p9:us-central1:agro-mas-db'  # Use db-f1-micro tier
+  _SERVICE_ACCOUNT: 'agro-mas-backend@rising-city-422302-p9.iam.gserviceaccount.com'
+
+# Build options
+options:
+  # Use high-performance build machine
+  machineType: 'E2_HIGHCPU_8'
+  
+  # Increase disk size for builds
+  diskSizeGb: 100
+  
+  # Enable build logs
+  logging: CLOUD_LOGGING_ONLY
+  
+  # Specify pool for build
+  # pool:
+  #   name: 'projects/rising-city-422302-p9/locations/us-central1/workerPools/agro-mas-pool'
+
+# Timeout for entire build
+timeout: '1200s'
+
+# Images to be pushed to Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/agro-mas-backend:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/agro-mas-backend:latest'
+
+# Tags for organization
+tags:
+  - 'agro-mas-backend'
+  - 'agricultural-marketplace'
+  - 'backend-api'
