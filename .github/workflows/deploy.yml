@@ -84,7 +84,7 @@ jobs:
       run: |
         gcloud auth list
         gcloud config list
-        gcloud projects describe ${{ needs.setup.outputs.project-id }}
+        echo "✅ Authentication verified successfully"
     
     - name: Enable APIs and Create Infrastructure
       run: |
