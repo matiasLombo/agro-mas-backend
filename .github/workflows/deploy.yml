@@ -1,0 +1,262 @@
+name: Deploy Agro Mas Backend
+
+on:
+  push:
+    branches: [ develop, master ]
+  pull_request:
+    branches: [ develop, master ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'develop'
+        type: choice
+        options:
+          - develop
+          - production
+
+jobs:
+  # Determine environment based on branch
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      project-id: ${{ steps.env.outputs.project-id }}
+      service-name: ${{ steps.env.outputs.service-name }}
+    steps:
+    - name: Determine Environment
+      id: env
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+        elif [ "${{ github.ref }}" = "refs/heads/master" ]; then
+          echo "environment=production" >> $GITHUB_OUTPUT
+        else
+          echo "environment=develop" >> $GITHUB_OUTPUT
+        fi
+        
+        # Set project ID and service name based on environment
+        if [ "$(echo ${{ github.ref == 'refs/heads/master' && 'production' || 'develop' }})" = "production" ]; then
+          echo "project-id=agro-mas-production" >> $GITHUB_OUTPUT
+          echo "service-name=agro-mas-backend" >> $GITHUB_OUTPUT
+        else
+          echo "project-id=agro-mas-develop" >> $GITHUB_OUTPUT
+          echo "service-name=agro-mas-backend-dev" >> $GITHUB_OUTPUT
+        fi
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Test Backend
+      run: |
+        go mod download
+        go test ./...
+
+  deploy-infrastructure:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [test, setup]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.setup.outputs.environment }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ needs.setup.outputs.project-id }}
+    
+    - name: Enable APIs and Create Infrastructure
+      run: |
+        # Enable required APIs
+        gcloud services enable \
+          sqladmin.googleapis.com \
+          secretmanager.googleapis.com \
+          run.googleapis.com \
+          cloudbuild.googleapis.com \
+          storage.googleapis.com \
+          --quiet
+        
+        # Create database if it doesn't exist
+        ENV=${{ needs.setup.outputs.environment }}
+        if [ "$ENV" = "production" ]; then
+          DB_INSTANCE="agro-mas-db-prod"
+          DB_NAME="agro_mas_prod" 
+          DB_USER="agro_mas_user"
+          BUCKET="agro-mas-storage-prod"
+          JWT_SECRET="agro-mas-jwt-secret-prod"
+          DB_SECRET="agro-mas-db-password-prod"
+        else
+          DB_INSTANCE="agro-mas-db-dev"
+          DB_NAME="agro_mas_dev"
+          DB_USER="agro_mas_dev_user" 
+          BUCKET="agro-mas-storage-dev"
+          JWT_SECRET="agro-mas-jwt-secret-dev"
+          DB_SECRET="agro-mas-db-password-dev"
+        fi
+        
+        # Check if database exists, create if not
+        if ! gcloud sql instances describe $DB_INSTANCE --quiet > /dev/null 2>&1; then
+          echo "Creating database instance $DB_INSTANCE..."
+          gcloud sql instances create $DB_INSTANCE \
+            --database-version=POSTGRES_15 \
+            --tier=db-f1-micro \
+            --region=us-central1 \
+            --storage-size=10GB \
+            --storage-type=SSD \
+            --backup \
+            --backup-location=us-central1 \
+            --authorized-networks=0.0.0.0/0 \
+            --quiet
+            
+          # Wait for instance to be ready
+          while [[ "$(gcloud sql instances describe $DB_INSTANCE --format='value(state)')" != "RUNNABLE" ]]; do
+            echo "Waiting for database instance..."
+            sleep 10
+          done
+          
+          # Create database
+          gcloud sql databases create $DB_NAME --instance=$DB_INSTANCE --quiet
+          
+          # Create user with password
+          DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+          gcloud sql users create $DB_USER \
+            --instance=$DB_INSTANCE \
+            --password="$DB_PASSWORD" \
+            --quiet
+            
+          # Store password in Secret Manager
+          echo -n "$DB_PASSWORD" | gcloud secrets create $DB_SECRET --data-file=- --quiet
+        fi
+        
+        # Create JWT secret if it doesn't exist
+        if ! gcloud secrets describe $JWT_SECRET --quiet > /dev/null 2>&1; then
+          JWT_TOKEN=$(openssl rand -base64 64 | tr -d "=+/" | cut -c1-64)
+          echo -n "$JWT_TOKEN" | gcloud secrets create $JWT_SECRET --data-file=- --quiet
+        fi
+        
+        # Create storage bucket if it doesn't exist
+        if ! gsutil ls gs://$BUCKET > /dev/null 2>&1; then
+          gcloud storage buckets create gs://$BUCKET --location=us-central1 --quiet
+        fi
+        
+        # Grant permissions to compute service account
+        PROJECT_NUMBER=$(gcloud projects describe ${{ needs.setup.outputs.project-id }} --format="value(projectNumber)")
+        gcloud projects add-iam-policy-binding ${{ needs.setup.outputs.project-id }} \
+          --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+          --role="roles/secretmanager.secretAccessor" \
+          --quiet
+
+  deploy-backend:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [deploy-infrastructure, setup]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.setup.outputs.environment }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ needs.setup.outputs.project-id }}
+    
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+    
+    - name: Build and Deploy Backend
+      run: |
+        ENV=${{ needs.setup.outputs.environment }}
+        PROJECT_ID=${{ needs.setup.outputs.project-id }}
+        SERVICE_NAME=${{ needs.setup.outputs.service-name }}
+        
+        # Set environment-specific variables
+        if [ "$ENV" = "production" ]; then
+          DB_INSTANCE="agro-mas-db-prod"
+          DB_NAME="agro_mas_prod"
+          DB_USER="agro_mas_user"
+          JWT_SECRET="agro-mas-jwt-secret-prod"
+          DB_SECRET="agro-mas-db-password-prod"
+          GIN_MODE="release"
+          MEMORY="512Mi"
+          CPU="1"
+          MIN_INSTANCES="1"
+          MAX_INSTANCES="10"
+        else
+          DB_INSTANCE="agro-mas-db-dev"
+          DB_NAME="agro_mas_dev"
+          DB_USER="agro_mas_dev_user"
+          JWT_SECRET="agro-mas-jwt-secret-dev"
+          DB_SECRET="agro-mas-db-password-dev"
+          GIN_MODE="debug"
+          MEMORY="256Mi"
+          CPU="0.5"
+          MIN_INSTANCES="0"
+          MAX_INSTANCES="2"
+        fi
+        
+        # Get database IP
+        DB_IP=$(gcloud sql instances describe $DB_INSTANCE --format="value(ipAddresses[0].ipAddress)")
+        
+        # Build Docker image
+        COMMIT_SHA=$(git rev-parse --short HEAD)
+        IMAGE_NAME="gcr.io/$PROJECT_ID/agro-mas-backend:$COMMIT_SHA"
+        
+        docker build -t $IMAGE_NAME -f Dockerfile .
+        docker push $IMAGE_NAME
+        
+        # Deploy to Cloud Run
+        gcloud run deploy $SERVICE_NAME \
+          --image=$IMAGE_NAME \
+          --region=us-central1 \
+          --platform=managed \
+          --allow-unauthenticated \
+          --port=8080 \
+          --memory=$MEMORY \
+          --cpu=$CPU \
+          --min-instances=$MIN_INSTANCES \
+          --max-instances=$MAX_INSTANCES \
+          --set-env-vars="ENVIRONMENT=$ENV,GIN_MODE=$GIN_MODE,DB_HOST=$DB_IP,DB_PORT=5432,DB_NAME=$DB_NAME,DB_USER=$DB_USER,DB_SSL_MODE=disable" \
+          --set-secrets="JWT_SECRET=$JWT_SECRET:latest,DB_PASSWORD=$DB_SECRET:latest" \
+          --quiet
+
+  integration-test:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [deploy-backend, setup]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.setup.outputs.environment }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ needs.setup.outputs.project-id }}
+    
+    - name: Integration Tests
+      run: |
+        SERVICE_NAME=${{ needs.setup.outputs.service-name }}
+        
+        # Get deployed URL
+        BACKEND_URL=$(gcloud run services describe $SERVICE_NAME --region=us-central1 --format="value(status.url)")
+        
+        echo "Testing backend health at: $BACKEND_URL/health"
+        
+        # Test health endpoint
+        if curl -f "$BACKEND_URL/health"; then
+          echo "✅ Backend health check passed!"
+        else
+          echo "❌ Backend health check failed!"
+          exit 1
+        fi
+        
+        echo "✅ All integration tests passed for ${{ needs.setup.outputs.environment }}!"
