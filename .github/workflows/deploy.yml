@@ -68,10 +68,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
     - name: Setup Google Cloud CLI
       uses: google-github-actions/setup-gcloud@v1
       with:
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
         project_id: ${{ needs.setup.outputs.project-id }}
     
     - name: Verify Google Cloud authentication
@@ -169,10 +173,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
     - name: Setup Google Cloud CLI
       uses: google-github-actions/setup-gcloud@v1
       with:
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
         project_id: ${{ needs.setup.outputs.project-id }}
     
     - name: Configure Docker for GCR
@@ -242,10 +250,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
     - name: Setup Google Cloud CLI
       uses: google-github-actions/setup-gcloud@v1
       with:
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
         project_id: ${{ needs.setup.outputs.project-id }}
     
     - name: Integration Tests
