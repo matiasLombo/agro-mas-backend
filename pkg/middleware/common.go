@@ -16,11 +16,11 @@ func CORSMiddleware() gin.HandlerFunc {
 			"http://localhost:4200",  // Angular default dev port
 			"http://localhost:4201",  // Angular alternative dev port
 			"http://localhost:3001",  // Alternative dev port
-			// New Firebase projects for environments
-			"https://agro-mas-frontend-dev.web.app",     // Firebase Development
-			"https://agro-mas-frontend-dev.firebaseapp.com", // Firebase Development Alt
-			"https://agro-mas-frontend-prod.web.app",    // Firebase Production
-			"https://agro-mas-frontend-prod.firebaseapp.com", // Firebase Production Alt
+			// Firebase projects for environments
+			"https://agro-mas-fe-dev-2025.web.app",     // Firebase Development
+			"https://agro-mas-fe-dev-2025.firebaseapp.com", // Firebase Development Alt
+			"https://agro-mas-fe-prod-2025.web.app",    // Firebase Production
+			"https://agro-mas-fe-prod-2025.firebaseapp.com", // Firebase Production Alt
 		},
 		AllowMethods: []string{
 			"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS",
