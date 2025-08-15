@@ -73,7 +73,7 @@ jobs:
     
     - name: Authenticate with service account
       env:
-        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_SA_KEY }}
+        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ needs.setup.outputs.environment == 'production' && secrets.GCP_SA_KEY_PROD || secrets.GCP_SA_KEY }}
       run: |
         echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/gcp-key.json
         gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
@@ -180,7 +180,7 @@ jobs:
     
     - name: Authenticate with service account
       env:
-        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_SA_KEY }}
+        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ needs.setup.outputs.environment == 'production' && secrets.GCP_SA_KEY_PROD || secrets.GCP_SA_KEY }}
       run: |
         echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/gcp-key.json
         gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
@@ -259,7 +259,7 @@ jobs:
     
     - name: Authenticate with service account
       env:
-        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_SA_KEY }}
+        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ needs.setup.outputs.environment == 'production' && secrets.GCP_SA_KEY_PROD || secrets.GCP_SA_KEY }}
       run: |
         echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/gcp-key.json
         gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
