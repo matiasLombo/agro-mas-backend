@@ -107,10 +107,40 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"status":    "healthy",
-			"timestamp": time.Now(),
-			"version":   "v1",
-			"database":  "up",
+			"status":      "healthy",
+			"timestamp":   time.Now(),
+			"version":     "v1",
+			"database":    "up",
+			"environment": cfg.Environment,
+		})
+	})
+
+	// Environment test endpoint
+	router.GET("/env", func(c *gin.Context) {
+		environment := cfg.Environment
+		var message string
+		var color string
+
+		switch environment {
+		case "production":
+			message = "🚀 You are connected to PRODUCTION environment"
+			color = "red"
+		case "development":
+			message = "🛠️ You are connected to DEVELOPMENT environment"
+			color = "blue"
+		default:
+			message = "❓ Unknown environment"
+			color = "gray"
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"environment":   environment,
+			"message":       message,
+			"color":         color,
+			"timestamp":     time.Now(),
+			"project_id":    cfg.GoogleCloud.ProjectID,
+			"gin_mode":      cfg.Server.GinMode,
+			"db_host":       cfg.Database.Host,
 		})
 	})
 
