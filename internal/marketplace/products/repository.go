@@ -102,8 +102,10 @@ func (r *Repository) GetProductByID(ctx context.Context, id uuid.UUID) (*Product
 		SELECT 
 			id, user_id, title, description, category, subcategory, price, price_type,
 			currency, unit, quantity, available_from, available_until, is_active,
-			is_featured, province, city, ST_X(location_coordinates) as lng,
-			ST_Y(location_coordinates) as lat, pickup_available, delivery_available,
+ 			is_featured, province, city, 
+			CASE WHEN location_coordinates IS NOT NULL THEN location_coordinates[0] ELSE NULL END as lng,
+			CASE WHEN location_coordinates IS NOT NULL THEN location_coordinates[1] ELSE NULL END as lat, 
+			pickup_available, delivery_available,
 			delivery_radius, seller_name, seller_phone, seller_rating,
 			seller_verification_level, views_count, favorites_count, inquiries_count,
 			search_keywords, created_at, updated_at, published_at, expires_at,
@@ -165,7 +167,7 @@ func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchReque
 
 	// Add filters
 	if req.Query != "" {
-		whereConditions = append(whereConditions, 
+		whereConditions = append(whereConditions,
 			fmt.Sprintf("to_tsvector('spanish', p.title || ' ' || COALESCE(p.description, '') || ' ' || COALESCE(p.search_keywords, '')) @@ plainto_tsquery('spanish', $%d)", argIndex))
 		args = append(args, req.Query)
 		argIndex++
@@ -287,7 +289,8 @@ func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchReque
 			p.id, p.user_id, p.title, p.description, p.category, p.subcategory,
 			p.price, p.price_type, p.currency, p.unit, p.quantity, p.available_from,
 			p.available_until, p.is_active, p.is_featured, p.province, p.city,
-			ST_X(p.location_coordinates) as lng, ST_Y(p.location_coordinates) as lat,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[0] ELSE NULL END as lng,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[1] ELSE NULL END as lat,
 			p.pickup_available, p.delivery_available, p.delivery_radius,
 			p.seller_name, p.seller_phone, p.seller_rating, p.seller_verification_level,
 			p.views_count, p.favorites_count, p.inquiries_count, p.search_keywords,

@@ -27,7 +27,7 @@ func (r *Repository) CreateUser(ctx context.Context, user *User) error {
 			role, verification_documents, preferences
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 
-			ST_GeomFromText('POINT(' || $13 || ' ' || $14 || ')', 4326),
+			CASE WHEN $13::float IS NOT NULL AND $14::float IS NOT NULL THEN POINT($13, $14) ELSE NULL END,
 			$15, $16, $17
 		)`
 
@@ -39,21 +39,23 @@ func (r *Repository) CreateUser(ctx context.Context, user *User) error {
 		lat.Valid = true
 	}
 
-	var verificationDocsJSON, preferencesJSON []byte
+	var verificationDocsJSON, preferencesJSON sql.NullString
 	var err error
 
 	if user.VerificationDocuments != nil {
-		verificationDocsJSON, err = json.Marshal(user.VerificationDocuments)
+		jsonData, err := json.Marshal(user.VerificationDocuments)
 		if err != nil {
 			return fmt.Errorf("failed to marshal verification documents: %w", err)
 		}
+		verificationDocsJSON = sql.NullString{String: string(jsonData), Valid: true}
 	}
 
 	if user.Preferences != nil {
-		preferencesJSON, err = json.Marshal(user.Preferences)
+		jsonData, err := json.Marshal(user.Preferences)
 		if err != nil {
 			return fmt.Errorf("failed to marshal preferences: %w", err)
 		}
+		preferencesJSON = sql.NullString{String: string(jsonData), Valid: true}
 	}
 
 	_, err = r.db.ExecContext(ctx, query,
@@ -75,7 +77,8 @@ func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*User, erro
 		SELECT 
 			id, email, password_hash, first_name, last_name, phone, cuit,
 			business_name, business_type, tax_category, province, city, address,
-			ST_X(coordinates) as lng, ST_Y(coordinates) as lat,
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[0] ELSE NULL END as lng, 
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[1] ELSE NULL END as lat,
 			role, verification_level, is_active, is_verified, rating,
 			total_sales, total_purchases, total_reviews, created_at, updated_at,
 			last_login, verification_documents, preferences
@@ -132,7 +135,8 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, e
 		SELECT 
 			id, email, password_hash, first_name, last_name, phone, cuit,
 			business_name, business_type, tax_category, province, city, address,
-			ST_X(coordinates) as lng, ST_Y(coordinates) as lat,
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[0] ELSE NULL END as lng, 
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[1] ELSE NULL END as lat,
 			role, verification_level, is_active, is_verified, rating,
 			total_sales, total_purchases, total_reviews, created_at, updated_at,
 			last_login, verification_documents, preferences
@@ -189,7 +193,8 @@ func (r *Repository) GetUserByCUIT(ctx context.Context, cuit string) (*User, err
 		SELECT 
 			id, email, password_hash, first_name, last_name, phone, cuit,
 			business_name, business_type, tax_category, province, city, address,
-			ST_X(coordinates) as lng, ST_Y(coordinates) as lat,
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[0] ELSE NULL END as lng, 
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[1] ELSE NULL END as lat,
 			role, verification_level, is_active, is_verified, rating,
 			total_sales, total_purchases, total_reviews, created_at, updated_at,
 			last_login, verification_documents, preferences
@@ -252,7 +257,7 @@ func (r *Repository) UpdateUser(ctx context.Context, id uuid.UUID, updates map[s
 	for field, value := range updates {
 		if field == "coordinates" && value != nil {
 			if coords, ok := value.(*Point); ok {
-				setParts = append(setParts, fmt.Sprintf("coordinates = ST_GeomFromText('POINT(%f %f)', 4326)", coords.Lng, coords.Lat))
+				setParts = append(setParts, fmt.Sprintf("coordinates = POINT(%f, %f)", coords.Lng, coords.Lat))
 				continue
 			}
 		}
@@ -330,7 +335,8 @@ func (r *Repository) ListUsers(ctx context.Context, filters UserFilters, limit, 
 		SELECT 
 			id, email, first_name, last_name, phone, cuit,
 			business_name, business_type, tax_category, province, city, address,
-			ST_X(coordinates) as lng, ST_Y(coordinates) as lat,
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[0] ELSE NULL END as lng, 
+			CASE WHEN coordinates IS NOT NULL THEN coordinates[1] ELSE NULL END as lat,
 			role, verification_level, is_active, is_verified, rating,
 			total_sales, total_purchases, total_reviews, created_at, updated_at,
 			last_login
