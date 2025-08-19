@@ -62,8 +62,8 @@ func (g *GeospatialService) FindNearbyProducts(ctx context.Context, req *NearbyS
 			p.province, p.city, p.seller_name, p.seller_phone, p.seller_rating,
 			p.seller_verification_level, p.views_count, p.favorites_count,
 			p.created_at, p.published_at,
-			ST_X(p.location_coordinates) as lng,
-			ST_Y(p.location_coordinates) as lat,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[0] ELSE NULL END as lng,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[1] ELSE NULL END as lat,
 			ST_Distance(
 				ST_GeogFromText('POINT(' || $1 || ' ' || $2 || ')'),
 				ST_GeogFromText(ST_AsText(p.location_coordinates))
@@ -329,8 +329,8 @@ func (g *GeospatialService) FindProductsAlongRoute(ctx context.Context, start, e
 			p.id, p.user_id, p.title, p.description, p.category, p.subcategory,
 			p.price, p.price_type, p.currency, p.province, p.city,
 			p.seller_name, p.seller_rating, p.created_at,
-			ST_X(p.location_coordinates) as lng,
-			ST_Y(p.location_coordinates) as lat,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[0] ELSE NULL END as lng,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[1] ELSE NULL END as lat,
 			ST_Distance(
 				ST_MakeLine(
 					ST_GeogFromText('POINT(' || $1 || ' ' || $2 || ')'),
