@@ -81,7 +81,7 @@ func main() {
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(userService)
-	productsHandler := handlers.NewProductsHandler(productService, imageService)
+	productsHandler := handlers.NewProductsHandler(productService, imageService, userService)
 
 	// Initialize Gin router
 	router := gin.New()

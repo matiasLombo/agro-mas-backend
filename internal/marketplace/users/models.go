@@ -16,6 +16,12 @@ type User struct {
 	LastName              string               `json:"last_name" db:"last_name"`
 	Phone                 *string              `json:"phone,omitempty" db:"phone"`
 	CUIT                  *string              `json:"cuit,omitempty" db:"cuit"`
+	CBU                   *string              `json:"cbu,omitempty" db:"cbu"`
+	CBUAlias              *string              `json:"cbu_alias,omitempty" db:"cbu_alias"`
+	BankName              *string              `json:"bank_name,omitempty" db:"bank_name"`
+	RENSPA                *string              `json:"renspa,omitempty" db:"renspa"`
+	EstablishmentName     *string              `json:"establishment_name,omitempty" db:"establishment_name"`
+	EstablishmentLocation *string              `json:"establishment_location,omitempty" db:"establishment_location"`
 	BusinessName          *string              `json:"business_name,omitempty" db:"business_name"`
 	BusinessType          *string              `json:"business_type,omitempty" db:"business_type"`
 	TaxCategory           *string              `json:"tax_category,omitempty" db:"tax_category"`
@@ -73,32 +79,44 @@ type UserPreferences struct {
 
 // CreateUserRequest represents the request to create a new user
 type CreateUserRequest struct {
-	Email        string  `json:"email" binding:"required,email"`
-	Password     string  `json:"password" binding:"required,min=8"`
-	FirstName    string  `json:"first_name" binding:"required"`
-	LastName     string  `json:"last_name" binding:"required"`
-	Phone        *string `json:"phone,omitempty"`
-	CUIT         *string `json:"cuit,omitempty"`
-	BusinessName *string `json:"business_name,omitempty"`
-	BusinessType *string `json:"business_type,omitempty"`
-	Province     *string `json:"province,omitempty"`
-	City         *string `json:"city,omitempty"`
-	Address      *string `json:"address,omitempty"`
-	Coordinates  *Point  `json:"coordinates,omitempty"`
-	Role         string  `json:"role" binding:"required,oneof=buyer seller"`
+	Email                 string  `json:"email" binding:"required,email"`
+	Password              string  `json:"password" binding:"required,min=8"`
+	FirstName             string  `json:"first_name" binding:"required"`
+	LastName              string  `json:"last_name" binding:"required"`
+	Phone                 *string `json:"phone,omitempty"`
+	CUIT                  *string `json:"cuit,omitempty"`
+	CBU                   *string `json:"cbu,omitempty"`
+	CBUAlias              *string `json:"cbu_alias,omitempty"`
+	BankName              *string `json:"bank_name,omitempty"`
+	RENSPA                *string `json:"renspa,omitempty"`
+	EstablishmentName     *string `json:"establishment_name,omitempty"`
+	EstablishmentLocation *string `json:"establishment_location,omitempty"`
+	BusinessName          *string `json:"business_name,omitempty"`
+	BusinessType          *string `json:"business_type,omitempty"`
+	Province              *string `json:"province,omitempty"`
+	City                  *string `json:"city,omitempty"`
+	Address               *string `json:"address,omitempty"`
+	Coordinates           *Point  `json:"coordinates,omitempty"`
+	Role                  string  `json:"role" binding:"required,oneof=buyer seller"`
 }
 
 // UpdateUserRequest represents the request to update user information
 type UpdateUserRequest struct {
-	FirstName    *string `json:"first_name,omitempty"`
-	LastName     *string `json:"last_name,omitempty"`
-	Phone        *string `json:"phone,omitempty"`
-	BusinessName *string `json:"business_name,omitempty"`
-	BusinessType *string `json:"business_type,omitempty"`
-	Province     *string `json:"province,omitempty"`
-	City         *string `json:"city,omitempty"`
-	Address      *string `json:"address,omitempty"`
-	Coordinates  *Point  `json:"coordinates,omitempty"`
+	FirstName             *string `json:"first_name,omitempty"`
+	LastName              *string `json:"last_name,omitempty"`
+	Phone                 *string `json:"phone,omitempty"`
+	CBU                   *string `json:"cbu,omitempty"`
+	CBUAlias              *string `json:"cbu_alias,omitempty"`
+	BankName              *string `json:"bank_name,omitempty"`
+	RENSPA                *string `json:"renspa,omitempty"`
+	EstablishmentName     *string `json:"establishment_name,omitempty"`
+	EstablishmentLocation *string `json:"establishment_location,omitempty"`
+	BusinessName          *string `json:"business_name,omitempty"`
+	BusinessType          *string `json:"business_type,omitempty"`
+	Province              *string `json:"province,omitempty"`
+	City                  *string `json:"city,omitempty"`
+	Address               *string `json:"address,omitempty"`
+	Coordinates           *Point  `json:"coordinates,omitempty"`
 }
 
 // LoginRequest represents the login request
@@ -115,6 +133,12 @@ type UserResponse struct {
 	LastName          string            `json:"last_name"`
 	Phone             *string           `json:"phone,omitempty"`
 	CUIT              *string           `json:"cuit,omitempty"`
+	CBU                   *string           `json:"cbu,omitempty"`
+	CBUAlias              *string           `json:"cbu_alias,omitempty"`
+	BankName              *string           `json:"bank_name,omitempty"`
+	RENSPA                *string           `json:"renspa,omitempty"`
+	EstablishmentName     *string           `json:"establishment_name,omitempty"`
+	EstablishmentLocation *string           `json:"establishment_location,omitempty"`
 	BusinessName      *string           `json:"business_name,omitempty"`
 	BusinessType      *string           `json:"business_type,omitempty"`
 	Province          *string           `json:"province,omitempty"`
@@ -149,6 +173,41 @@ type PublicUserResponse struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// SellerProfileRequest represents the request to upgrade a buyer to seller
+type SellerProfileRequest struct {
+	CUIT                  string  `json:"cuit" binding:"required"`
+	CBU                   string  `json:"cbu" binding:"required"`
+	CBUAlias              *string `json:"cbu_alias,omitempty"`
+	BankName              *string `json:"bank_name,omitempty"`
+	RENSPA                string  `json:"renspa" binding:"required"`
+	EstablishmentName     *string `json:"establishment_name,omitempty"`
+	EstablishmentLocation *string `json:"establishment_location,omitempty"`
+	BusinessName          string  `json:"business_name" binding:"required"`
+	BusinessType          *string `json:"business_type,omitempty"`
+	Phone                 string  `json:"phone" binding:"required"`
+	Address               string  `json:"address" binding:"required"`
+	City                  string  `json:"city" binding:"required"`
+	Province              string  `json:"province" binding:"required"`
+}
+
+// SellerProfileResponse represents seller profile information
+type SellerProfileResponse struct {
+	CUIT                  *string `json:"cuit,omitempty"`
+	CBU                   *string `json:"cbu,omitempty"`
+	CBUAlias              *string `json:"cbu_alias,omitempty"`
+	BankName              *string `json:"bank_name,omitempty"`
+	RENSPA                *string `json:"renspa,omitempty"`
+	EstablishmentName     *string `json:"establishment_name,omitempty"`
+	EstablishmentLocation *string `json:"establishment_location,omitempty"`
+	BusinessName          *string `json:"business_name,omitempty"`
+	BusinessType          *string `json:"business_type,omitempty"`
+	Phone                 *string `json:"phone,omitempty"`
+	Address               *string `json:"address,omitempty"`
+	City                  *string `json:"city,omitempty"`
+	Province              *string `json:"province,omitempty"`
+	IsComplete            bool    `json:"is_complete"`
+}
+
 // Implement database/sql driver interfaces for custom types
 func (p *Point) Scan(value interface{}) error {
 	if value == nil {
@@ -176,6 +235,12 @@ func (u *User) ToResponse() *UserResponse {
 		LastName:          u.LastName,
 		Phone:             u.Phone,
 		CUIT:              u.CUIT,
+		CBU:                   u.CBU,
+		CBUAlias:              u.CBUAlias,
+		BankName:              u.BankName,
+		RENSPA:                u.RENSPA,
+		EstablishmentName:     u.EstablishmentName,
+		EstablishmentLocation: u.EstablishmentLocation,
 		BusinessName:      u.BusinessName,
 		BusinessType:      u.BusinessType,
 		Province:          u.Province,

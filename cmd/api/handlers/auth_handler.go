@@ -55,9 +55,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// Generate JWT token for newly registered user
+	tokenResponse, err := h.userService.GenerateTokenForUser(c.Request.Context(), user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to generate authentication token",
+			"code":  "TOKEN_GENERATION_FAILED",
+		})
+		return
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "User registered successfully",
 		"user":    user.ToResponse(),
+		"token":   tokenResponse,
 	})
 }
 
@@ -251,6 +262,100 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	})
 }
 
+// GetSellerProfile returns the current user's seller profile status
+func (h *AuthHandler) GetSellerProfile(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+			"code":  "AUTH_REQUIRED",
+		})
+		return
+	}
+
+	profile, err := h.userService.GetSellerProfile(c.Request.Context(), userID.(uuid.UUID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get seller profile",
+			"code":  "SELLER_PROFILE_FETCH_FAILED",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"profile": profile,
+	})
+}
+
+// CheckSellerProfileComplete checks if user has complete seller profile
+func (h *AuthHandler) CheckSellerProfileComplete(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+			"code":  "AUTH_REQUIRED",
+		})
+		return
+	}
+
+	isComplete, err := h.userService.IsSellerProfileComplete(c.Request.Context(), userID.(uuid.UUID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to check seller profile status",
+			"code":  "SELLER_PROFILE_CHECK_FAILED",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"is_complete": isComplete,
+	})
+}
+
+// UpgradeToSeller upgrades a buyer to seller with required information
+func (h *AuthHandler) UpgradeToSeller(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+			"code":  "AUTH_REQUIRED",
+		})
+		return
+	}
+
+	var req users.SellerProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request format",
+			"code":  "INVALID_REQUEST",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	err := h.userService.UpgradeToSeller(c.Request.Context(), userID.(uuid.UUID), &req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		code := "SELLER_UPGRADE_FAILED"
+
+		// Handle specific errors
+		if err == users.ErrCUITExists {
+			status = http.StatusConflict
+			code = "CUIT_EXISTS"
+		}
+
+		c.JSON(status, gin.H{
+			"error": err.Error(),
+			"code":  code,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Successfully upgraded to seller",
+	})
+}
+
 // RegisterRoutes registers authentication routes
 func (h *AuthHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware gin.HandlerFunc) {
 	auth := router.Group("/auth")
@@ -266,6 +371,11 @@ func (h *AuthHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware gin
 			protected.GET("/profile", h.GetProfile)
 			protected.PUT("/profile", h.UpdateProfile)
 			protected.POST("/change-password", h.ChangePassword)
+			
+			// Seller profile routes
+			protected.GET("/seller-profile", h.GetSellerProfile)
+			protected.GET("/seller-profile/check", h.CheckSellerProfileComplete)
+			protected.POST("/upgrade-to-seller", h.UpgradeToSeller)
 		}
 	}
 

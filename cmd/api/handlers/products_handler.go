@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"agro-mas-backend/internal/marketplace/products"
+	"agro-mas-backend/internal/marketplace/users"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -12,12 +13,14 @@ import (
 type ProductsHandler struct {
 	productService *products.Service
 	imageService   *products.ImageService
+	userService    *users.Service
 }
 
-func NewProductsHandler(productService *products.Service, imageService *products.ImageService) *ProductsHandler {
+func NewProductsHandler(productService *products.Service, imageService *products.ImageService, userService *users.Service) *ProductsHandler {
 	return &ProductsHandler{
 		productService: productService,
 		imageService:   imageService,
+		userService:    userService,
 	}
 }
 
@@ -28,6 +31,25 @@ func (h *ProductsHandler) CreateProduct(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
 			"code":  "AUTH_REQUIRED",
+		})
+		return
+	}
+
+	// Check if user has complete seller profile
+	isComplete, err := h.userService.IsSellerProfileComplete(c.Request.Context(), userID.(uuid.UUID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to check seller profile status",
+			"code":  "SELLER_PROFILE_CHECK_FAILED",
+		})
+		return
+	}
+
+	if !isComplete {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Seller profile incomplete",
+			"code":  "SELLER_PROFILE_INCOMPLETE",
+			"message": "You must complete your seller profile before publishing products",
 		})
 		return
 	}
