@@ -1,0 +1,149 @@
+<div class="seller-setup-modal">
+  <div class="modal-header">
+    <div class="header-icon">
+      <mat-icon>store</mat-icon>
+    </div>
+    <h2 mat-dialog-title>Configura tu Perfil de Vendedor</h2>
+    <p class="subtitle">Para publicar productos necesitas completar tu información comercial</p>
+  </div>
+
+  <div mat-dialog-content class="modal-content">
+    <!-- Loading State -->
+    <div *ngIf="isLoading" class="loading-container">
+      <div class="loading-spinner">
+        <mat-icon class="spinning">refresh</mat-icon>
+      </div>
+      <p>Cargando información existente...</p>
+    </div>
+
+    <!-- Form Content -->
+    <form *ngIf="!isLoading" [formGroup]="sellerForm" (ngSubmit)="onSubmit()">
+      <!-- Información del Negocio -->
+      <div class="form-section">
+        <h3 class="section-title">
+          <mat-icon>business</mat-icon>
+          Información del Negocio
+        </h3>
+
+        <div class="form-row">
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-label>Nombre Comercial / Razón Social</mat-label>
+            <input matInput formControlName="business_name">
+            <mat-icon matSuffix>business</mat-icon>
+            <mat-error>{{ getFieldError('business_name') }}</mat-error>
+          </mat-form-field>
+        </div>
+
+        <div class="form-row">
+          <mat-form-field appearance="outline" class="half-width">
+            <mat-label>CUIT</mat-label>
+            <input matInput formControlName="cuit" placeholder="20123456789">
+            <mat-icon matSuffix>assignment_ind</mat-icon>
+            <mat-error>{{ getFieldError('cuit') }}</mat-error>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="half-width">
+            <mat-label>Tipo de Negocio (Opcional)</mat-label>
+            <mat-select formControlName="business_type">
+              <mat-option value="individual">Persona Física</mat-option>
+              <mat-option value="company">Empresa</mat-option>
+              <mat-option value="cooperative">Cooperativa</mat-option>
+              <mat-option value="association">Asociación</mat-option>
+            </mat-select>
+          </mat-form-field>
+        </div>
+      </div>
+
+      <!-- Información Bancaria -->
+      <div class="form-section">
+        <h3 class="section-title">
+          <mat-icon>account_balance</mat-icon>
+          Información Bancaria
+        </h3>
+
+        <div class="form-row">
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-label>CBU / CVU</mat-label>
+            <input matInput formControlName="cbu" placeholder="22 dígitos">
+            <mat-icon matSuffix>account_balance_wallet</mat-icon>
+            <mat-hint>22 dígitos para recibir pagos</mat-hint>
+            <mat-error>{{ getFieldError('cbu') }}</mat-error>
+          </mat-form-field>
+        </div>
+
+        <div class="form-row">
+          <mat-form-field appearance="outline" class="half-width">
+            <mat-label>Alias del CBU (Opcional)</mat-label>
+            <input matInput formControlName="cbu_alias" placeholder="tu.alias">
+            <mat-icon matSuffix>alternate_email</mat-icon>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="half-width">
+            <mat-label>Banco (Opcional)</mat-label>
+            <input matInput formControlName="bank_name" placeholder="Banco">
+            <mat-icon matSuffix>account_balance</mat-icon>
+          </mat-form-field>
+        </div>
+      </div>
+
+      <!-- Información RENSPA -->
+      <div class="form-section">
+        <h3 class="section-title">
+          <mat-icon>agriculture</mat-icon>
+          Registro Agropecuario (RENSPA)
+        </h3>
+
+        <div class="form-row">
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-label>Código RENSPA</mat-label>
+            <input matInput formControlName="renspa" placeholder="123456789010x">
+            <mat-icon matSuffix>verified</mat-icon>
+            <mat-error>{{ getFieldError('renspa') }}</mat-error>
+          </mat-form-field>
+        </div>
+
+        <div class="form-row">
+          <mat-form-field appearance="outline" class="half-width">
+            <mat-label>Nombre del Establecimiento (Opcional)</mat-label>
+            <input matInput formControlName="establishment_name" placeholder="Estancia">
+            <mat-icon matSuffix>business</mat-icon>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="half-width">
+            <mat-label>Ubicación del Establecimiento (Opcional)</mat-label>
+            <input matInput formControlName="establishment_location" placeholder="Ubicación">
+            <mat-icon matSuffix>location_on</mat-icon>
+          </mat-form-field>
+        </div>
+      </div>
+
+
+      <!-- Info Box -->
+      <div class="info-box">
+        <mat-icon>info</mat-icon>
+        <div class="info-content">
+          <h4>¿Por qué necesitamos esta información?</h4>
+          <ul>
+            <li><strong>CUIT:</strong> Para verificar tu identidad fiscal</li>
+            <li><strong>CBU/CVU:</strong> Para que puedas recibir pagos de tus ventas</li>
+            <li><strong>RENSPA:</strong> Para verificar tu habilitación agropecuaria</li>
+          </ul>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div mat-dialog-actions class="modal-actions">
+    <button mat-stroked-button (click)="onCancel()" [disabled]="isSubmitting || isLoading" class="cancel-button">
+      Cancelar
+    </button>
+
+    <button mat-raised-button color="primary" (click)="onSubmit()"
+      [disabled]="!sellerForm.valid || isSubmitting || isLoading" class="submit-button">
+      <mat-icon *ngIf="isSubmitting">hourglass_empty</mat-icon>
+      <mat-icon *ngIf="!isSubmitting && !isLoading">check_circle</mat-icon>
+      <mat-icon *ngIf="isLoading">refresh</mat-icon>
+      {{ isSubmitting ? 'Configurando...' : (isLoading ? 'Cargando...' : 'Completar Configuración') }}
+    </button>
+  </div>
+</div>

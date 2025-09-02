@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "dev": "agro-mas-fe-dev-2025",
+    "prod": "agro-mas-fe-prod-2025"
+  },
+  "targets": {},
+  "etags": {}
+}
