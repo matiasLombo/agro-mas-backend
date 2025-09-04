@@ -298,7 +298,7 @@ func (s *ImageService) updateProductImage(ctx context.Context, imageID uuid.UUID
 		argIndex++
 	}
 
-	query := fmt.Sprintf("UPDATE product_images SET %s WHERE id = $%d", 
+	query := fmt.Sprintf("UPDATE product_images SET %s WHERE id = $%d",
 		strings.Join(setParts, ", "), argIndex)
 	args = append(args, imageID)
 
@@ -310,6 +310,11 @@ func (s *ImageService) deleteProductImage(ctx context.Context, imageID uuid.UUID
 	query := `DELETE FROM product_images WHERE id = $1`
 	_, err := s.db.ExecContext(ctx, query, imageID)
 	return err
+}
+
+// UpdateImageMetadata updates metadata for an existing image
+func (s *ImageService) UpdateImageMetadata(ctx context.Context, imageID uuid.UUID, updates map[string]interface{}) error {
+	return s.updateProductImage(ctx, imageID, updates)
 }
 
 func (s *ImageService) setPrimaryImageIfNeeded(ctx context.Context, productID uuid.UUID) error {

@@ -14,13 +14,13 @@ type GeospatialService struct {
 }
 
 type NearbySearchRequest struct {
-	Latitude     float64  `json:"latitude" binding:"required"`
-	Longitude    float64  `json:"longitude" binding:"required"`
-	RadiusKm     float64  `json:"radius_km" binding:"required,min=1,max=500"`
-	Category     string   `json:"category,omitempty"`
-	Subcategory  string   `json:"subcategory,omitempty"`
-	MaxResults   int      `json:"max_results,omitempty"`
-	PriceRange   *PriceRange `json:"price_range,omitempty"`
+	Latitude    float64     `json:"latitude" binding:"required"`
+	Longitude   float64     `json:"longitude" binding:"required"`
+	RadiusKm    float64     `json:"radius_km" binding:"required,min=1,max=500"`
+	Category    string      `json:"category,omitempty"`
+	Subcategory string      `json:"subcategory,omitempty"`
+	MaxResults  int         `json:"max_results,omitempty"`
+	PriceRange  *PriceRange `json:"price_range,omitempty"`
 }
 
 type PriceRange struct {
@@ -29,9 +29,9 @@ type PriceRange struct {
 }
 
 type NearbyProduct struct {
-	Product     *Product `json:"product"`
-	DistanceKm  float64  `json:"distance_km"`
-	BearingDeg  float64  `json:"bearing_deg,omitempty"`
+	Product    *Product `json:"product"`
+	DistanceKm float64  `json:"distance_km"`
+	BearingDeg float64  `json:"bearing_deg,omitempty"`
 }
 
 type LocationBounds struct {
@@ -40,12 +40,12 @@ type LocationBounds struct {
 }
 
 type GeospatialStats struct {
-	TotalProductsInRadius int                    `json:"total_products_in_radius"`
-	ProductsByCategory    map[string]int         `json:"products_by_category"`
-	ProductsByProvince    map[string]int         `json:"products_by_province"`
-	AverageDistance       float64                `json:"average_distance_km"`
-	FarthestProduct       *NearbyProduct         `json:"farthest_product,omitempty"`
-	ClosestProduct        *NearbyProduct         `json:"closest_product,omitempty"`
+	TotalProductsInRadius int            `json:"total_products_in_radius"`
+	ProductsByCategory    map[string]int `json:"products_by_category"`
+	ProductsByProvince    map[string]int `json:"products_by_province"`
+	AverageDistance       float64        `json:"average_distance_km"`
+	FarthestProduct       *NearbyProduct `json:"farthest_product,omitempty"`
+	ClosestProduct        *NearbyProduct `json:"closest_product,omitempty"`
 }
 
 func NewGeospatialService(db *sql.DB) *GeospatialService {
@@ -74,7 +74,6 @@ func (g *GeospatialService) FindNearbyProducts(ctx context.Context, req *NearbyS
 			) * 180 / PI() as bearing_deg
 		FROM products p
 		WHERE p.is_active = true 
-		AND p.published_at IS NOT NULL
 		AND p.location_coordinates IS NOT NULL
 		AND ST_DWithin(
 			ST_GeogFromText('POINT(' || $1 || ' ' || $2 || ')'),
@@ -187,7 +186,6 @@ func (g *GeospatialService) GetGeospatialStats(ctx context.Context, req *NearbyS
 			) / 1000 as distance_km
 		FROM products p
 		WHERE p.is_active = true 
-		AND p.published_at IS NOT NULL
 		AND p.location_coordinates IS NOT NULL
 		AND ST_DWithin(
 			ST_GeogFromText('POINT(' || $1 || ' ' || $2 || ')'),
@@ -258,7 +256,6 @@ func (g *GeospatialService) GetProductsInBounds(ctx context.Context, bounds Loca
 			ST_Y(p.location_coordinates) as lat
 		FROM products p
 		WHERE p.is_active = true 
-		AND p.published_at IS NOT NULL
 		AND p.location_coordinates IS NOT NULL
 		AND ST_Within(
 			p.location_coordinates,
@@ -340,7 +337,6 @@ func (g *GeospatialService) FindProductsAlongRoute(ctx context.Context, start, e
 			) / 1000 as distance_to_route_km
 		FROM products p
 		WHERE p.is_active = true 
-		AND p.published_at IS NOT NULL
 		AND p.location_coordinates IS NOT NULL
 		AND ST_DWithin(
 			ST_MakeLine(
@@ -451,8 +447,7 @@ func (g *GeospatialService) GetProductDensityGrid(ctx context.Context, bounds Lo
 				SELECT COUNT(*)
 				FROM products p
 				WHERE p.is_active = true 
-				AND p.published_at IS NOT NULL
-				AND p.location_coordinates IS NOT NULL
+						AND p.location_coordinates IS NOT NULL
 				AND ST_Within(
 					p.location_coordinates,
 					ST_MakeEnvelope($1, $2, $3, $4, 4326)
@@ -498,13 +493,13 @@ func (g *GeospatialService) handleNearbySearch(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	results, err := g.FindNearbyProducts(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Search failed"})
 		return
 	}
-	
+
 	c.JSON(200, results)
 }
 
@@ -515,37 +510,37 @@ func (g *GeospatialService) handleBoundsSearch(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	results, err := g.FindNearbyProducts(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Search failed"})
 		return
 	}
-	
+
 	c.JSON(200, results)
 }
 
 func (g *GeospatialService) handleRouteSearch(c *gin.Context) {
 	type RouteRequest struct {
-		Start     Point   `json:"start"`
-		End       Point   `json:"end"`
-		BufferKm  float64 `json:"buffer_km"`
-		Category  string  `json:"category"`
-		MaxResults int    `json:"max_results"`
+		Start      Point   `json:"start"`
+		End        Point   `json:"end"`
+		BufferKm   float64 `json:"buffer_km"`
+		Category   string  `json:"category"`
+		MaxResults int     `json:"max_results"`
 	}
-	
+
 	var req RouteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	results, err := g.FindProductsAlongRoute(c.Request.Context(), req.Start, req.End, req.BufferKm, req.Category, req.MaxResults)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Search failed"})
 		return
 	}
-	
+
 	c.JSON(200, results)
 }
 
@@ -555,13 +550,13 @@ func (g *GeospatialService) handleGeospatialStats(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	stats, err := g.GetGeospatialStats(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Stats failed"})
 		return
 	}
-	
+
 	c.JSON(200, stats)
 }
 
@@ -570,19 +565,19 @@ func (g *GeospatialService) handleDistanceCalculation(c *gin.Context) {
 		Point1 Point `json:"point1"`
 		Point2 Point `json:"point2"`
 	}
-	
+
 	var req DistanceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	distance, err := g.CalculateDistance(c.Request.Context(), req.Point1, req.Point2)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Calculation failed"})
 		return
 	}
-	
+
 	c.JSON(200, gin.H{"distance_km": distance})
 }
 
@@ -593,7 +588,7 @@ func (g *GeospatialService) handleDensityGrid(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
-	
+
 	// Return a basic response for density grid
 	c.JSON(200, gin.H{"message": "Density grid not implemented"})
 }

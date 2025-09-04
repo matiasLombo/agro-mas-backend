@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"agro-mas-backend/internal/marketplace/products"
 	"agro-mas-backend/internal/marketplace/users"
@@ -62,7 +63,7 @@ func (h *ProductsHandler) CreateProduct(c *gin.Context) {
 
 	// Check if this is multipart form data (with images) or JSON
 	contentType := c.GetHeader("Content-Type")
-	if contentType != "" && contentType[:19] == "multipart/form-data" {
+	if contentType != "" && strings.HasPrefix(contentType, "multipart/form-data") {
 		// Handle FormData with images
 		productJSON := c.PostForm("product")
 		if productJSON == "" {
@@ -279,6 +280,12 @@ func (h *ProductsHandler) SearchProducts(c *gin.Context) {
 		req.Tags = tags
 	}
 
+	// If user is authenticated, exclude their own products
+	if userID, exists := c.Get("user_id"); exists {
+		userUUID := userID.(uuid.UUID)
+		req.ExcludeUserID = &userUUID
+	}
+
 	response, err := h.productService.SearchProducts(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -360,12 +367,12 @@ func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
 
 		fmt.Printf("[DEBUG] PUT: About to parse JSON: '%s'\n", productJSON)
 		fmt.Printf("[DEBUG] PUT: JSON length: %d\n", len(productJSON))
-		
+
 		if err := json.Unmarshal([]byte(productJSON), &req); err != nil {
 			fmt.Printf("[ERROR] PUT: Failed to unmarshal product JSON: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":   "Invalid request format",
-				"code":    "INVALID_REQUEST", 
+				"code":    "INVALID_REQUEST",
 				"details": err.Error(),
 			})
 			return
@@ -408,9 +415,10 @@ func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
 
 	var product *products.Product
 
-	// Update product - use UpdateProductWithImages if we have image files, otherwise use UpdateProduct
-	if len(imageFiles) > 0 {
-		// Update product with images
+	// Update product - use UpdateProductWithImages if we have image files OR existing_images changes, otherwise use UpdateProduct
+	hasImageChanges := len(imageFiles) > 0 || req.ExistingImages != nil
+	if hasImageChanges {
+		// Update product with images (new images or existing image changes)
 		product, err = h.productService.UpdateProductWithImages(c.Request.Context(), userID.(uuid.UUID), productID, &req, imageFiles)
 	} else {
 		// Update product without images
@@ -714,11 +722,11 @@ func (h *ProductsHandler) UploadProductImage(c *gin.Context) {
 }
 
 // RegisterRoutes registers product routes
-func (h *ProductsHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware, sellerMiddleware gin.HandlerFunc) {
+func (h *ProductsHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware, optionalAuthMiddleware, sellerMiddleware gin.HandlerFunc) {
 	products := router.Group("/products")
 	{
-		// Public routes
-		products.GET("/search", h.SearchProducts)
+		// Public routes with optional authentication
+		products.GET("/search", optionalAuthMiddleware, h.SearchProducts)
 		products.GET("/:id", h.GetProduct)
 		products.GET("/:id/images", h.GetProductImages)
 

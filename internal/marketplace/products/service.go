@@ -12,22 +12,24 @@ import (
 )
 
 var (
-	ErrProductNotFound     = errors.New("product not found")
+	ErrProductNotFound       = errors.New("product not found")
 	ErrProductNotOwnedByUser = errors.New("product not owned by user")
-	ErrInvalidCategory     = errors.New("invalid product category")
-	ErrInvalidPriceType    = errors.New("invalid price type")
-	ErrProductNotActive    = errors.New("product is not active")
+	ErrInvalidCategory       = errors.New("invalid product category")
+	ErrInvalidPriceType      = errors.New("invalid price type")
+	ErrProductNotActive      = errors.New("product is not active")
 )
 
 type Service struct {
-	repo         *Repository
-	imageService *ImageService
+	repo            *Repository
+	imageService    *ImageService
+	locationService *LocationService
 }
 
 func NewService(repo *Repository, imageService *ImageService) *Service {
 	return &Service{
-		repo:         repo,
-		imageService: imageService,
+		repo:            repo,
+		imageService:    imageService,
+		locationService: NewLocationService(),
 	}
 }
 
@@ -51,6 +53,21 @@ func (s *Service) CreateProduct(ctx context.Context, userID uuid.UUID, req *Crea
 	// Generate search keywords
 	searchKeywords := s.generateSearchKeywords(req)
 
+	// Resolve location names
+	var provinceStr, cityStr string
+	if req.Province != nil {
+		provinceStr = *req.Province
+	}
+	if req.City != nil {
+		cityStr = *req.City
+	}
+
+	provinceName, departmentName, settlementName, err := s.locationService.ResolveLocationNames(
+		ctx, provinceStr, cityStr)
+	if err != nil {
+		fmt.Printf("Warning: failed to resolve location names: %v\n", err)
+	}
+
 	// Create product object
 	product := &Product{
 		ID:                      uuid.New(),
@@ -70,6 +87,9 @@ func (s *Service) CreateProduct(ctx context.Context, userID uuid.UUID, req *Crea
 		IsFeatured:              false,
 		Province:                req.Province,
 		City:                    req.City,
+		ProvinceName:            stringToPointer(provinceName),
+		DepartmentName:          stringToPointer(departmentName),
+		SettlementName:          stringToPointer(settlementName),
 		LocationCoordinates:     req.LocationCoordinates,
 		PickupAvailable:         req.PickupAvailable,
 		DeliveryAvailable:       req.DeliveryAvailable,
@@ -222,7 +242,7 @@ func (s *Service) SearchProducts(ctx context.Context, req *ProductSearchRequest)
 func (s *Service) UpdateProduct(ctx context.Context, userID, productID uuid.UUID, req *UpdateProductRequest) (*Product, error) {
 	fmt.Printf("[DEBUG] UpdateProduct called with userID: %v, productID: %v\n", userID, productID)
 	fmt.Printf("[DEBUG] Update request: %+v\n", req)
-	
+
 	// Get existing product
 	existingProduct, err := s.repo.GetProductByID(ctx, productID)
 	if err != nil {
@@ -322,7 +342,7 @@ func (s *Service) UpdateProduct(ctx context.Context, userID, productID uuid.UUID
 	return s.repo.GetProductByID(ctx, productID)
 }
 
-// UpdateProductWithImages updates an existing product and processes new images
+// UpdateProductWithImages updates an existing product and processes image changes
 func (s *Service) UpdateProductWithImages(ctx context.Context, userID, productID uuid.UUID, req *UpdateProductRequest, imageFiles []*multipart.FileHeader) (*Product, error) {
 	// Update the product first
 	product, err := s.UpdateProduct(ctx, userID, productID, req)
@@ -330,8 +350,51 @@ func (s *Service) UpdateProductWithImages(ctx context.Context, userID, productID
 		return nil, err
 	}
 
-	// Process images if provided
+	// Handle existing images changes (deletion) - process when ExistingImages is provided (even if empty)
+	if req.ExistingImages != nil {
+		fmt.Printf("[DEBUG] Processing existing images: %d images to keep\n", len(req.ExistingImages))
+
+		// Get current product images
+		currentImages, err := s.imageService.GetProductImages(ctx, productID)
+		if err != nil {
+			fmt.Printf("[ERROR] Failed to get current images: %v\n", err)
+		} else {
+			// Create a map of images to keep
+			keepImages := make(map[string]bool)
+			for _, img := range req.ExistingImages {
+				keepImages[img.ID] = true
+				fmt.Printf("[DEBUG] Keeping image: %s (primary: %t)\n", img.ID, img.IsPrimary)
+			}
+
+			// Delete images not in the keep list
+			for _, currentImg := range currentImages {
+				if !keepImages[currentImg.ID.String()] {
+					fmt.Printf("[DEBUG] Deleting image: %s\n", currentImg.ID.String())
+					err := s.imageService.DeleteProductImage(ctx, userID, currentImg.ID)
+					if err != nil {
+						fmt.Printf("[ERROR] Failed to delete image %s: %v\n", currentImg.ID.String(), err)
+					}
+				}
+			}
+
+			// Update metadata for existing images (primary status, display order)
+			for _, imgInfo := range req.ExistingImages {
+				if imgUUID, err := uuid.Parse(imgInfo.ID); err == nil {
+					updates := map[string]interface{}{
+						"is_primary":    imgInfo.IsPrimary,
+						"display_order": imgInfo.DisplayOrder,
+					}
+					if err := s.imageService.UpdateImageMetadata(ctx, imgUUID, updates); err != nil {
+						fmt.Printf("[ERROR] Failed to update image metadata %s: %v\n", imgInfo.ID, err)
+					}
+				}
+			}
+		}
+	}
+
+	// Process new images if provided
 	if len(imageFiles) > 0 {
+		fmt.Printf("[DEBUG] Processing new images: %d files\n", len(imageFiles))
 		for i, fileHeader := range imageFiles {
 			file, err := fileHeader.Open()
 			if err != nil {
@@ -566,4 +629,11 @@ func getSliceValue(slice []string, defaultSlice []string) []string {
 		return slice
 	}
 	return defaultSlice
+}
+
+func stringToPointer(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

@@ -163,7 +163,7 @@ func (r *Repository) GetProductByID(ctx context.Context, id uuid.UUID) (*Product
 
 // SearchProducts searches for products with filters
 func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchRequest) ([]*Product, int, error) {
-	whereConditions := []string{"p.is_active = true", "p.published_at IS NOT NULL"}
+	whereConditions := []string{"p.is_active = true"}
 	args := []interface{}{}
 	argIndex := 1
 
@@ -238,6 +238,12 @@ func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchReque
 	if len(req.Tags) > 0 {
 		whereConditions = append(whereConditions, fmt.Sprintf("p.tags && $%d", argIndex))
 		args = append(args, pq.Array(req.Tags))
+		argIndex++
+	}
+
+	if req.ExcludeUserID != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("p.user_id != $%d", argIndex))
+		args = append(args, *req.ExcludeUserID)
 		argIndex++
 	}
 
@@ -383,7 +389,7 @@ func (r *Repository) insertTransportDetails(ctx context.Context, tx *sql.Tx, det
 
 func (r *Repository) insertLivestockDetails(ctx context.Context, tx *sql.Tx, details *LivestockDetails) error {
 	var vaccinationsJSON, breedingHistoryJSON sql.NullString
-	
+
 	if details.Vaccinations != nil {
 		jsonData, err := json.Marshal(details.Vaccinations)
 		if err != nil {
@@ -657,7 +663,7 @@ func (r *Repository) UpdateProduct(ctx context.Context, id uuid.UUID, updates ma
 
 	fmt.Printf("[DEBUG] Executing query: %s\n", query)
 	fmt.Printf("[DEBUG] Args: %v\n", args)
-	
+
 	_, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		fmt.Printf("[ERROR] SQL execution failed: %v\n", err)
