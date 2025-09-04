@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"strings"
 	"time"
 
@@ -11,20 +12,24 @@ import (
 )
 
 var (
-	ErrProductNotFound     = errors.New("product not found")
+	ErrProductNotFound       = errors.New("product not found")
 	ErrProductNotOwnedByUser = errors.New("product not owned by user")
-	ErrInvalidCategory     = errors.New("invalid product category")
-	ErrInvalidPriceType    = errors.New("invalid price type")
-	ErrProductNotActive    = errors.New("product is not active")
+	ErrInvalidCategory       = errors.New("invalid product category")
+	ErrInvalidPriceType      = errors.New("invalid price type")
+	ErrProductNotActive      = errors.New("product is not active")
 )
 
 type Service struct {
-	repo *Repository
+	repo            *Repository
+	imageService    *ImageService
+	locationService *LocationService
 }
 
-func NewService(repo *Repository) *Service {
+func NewService(repo *Repository, imageService *ImageService) *Service {
 	return &Service{
-		repo: repo,
+		repo:            repo,
+		imageService:    imageService,
+		locationService: NewLocationService(),
 	}
 }
 
@@ -48,6 +53,21 @@ func (s *Service) CreateProduct(ctx context.Context, userID uuid.UUID, req *Crea
 	// Generate search keywords
 	searchKeywords := s.generateSearchKeywords(req)
 
+	// Resolve location names
+	var provinceStr, cityStr string
+	if req.Province != nil {
+		provinceStr = *req.Province
+	}
+	if req.City != nil {
+		cityStr = *req.City
+	}
+
+	provinceName, departmentName, settlementName, err := s.locationService.ResolveLocationNames(
+		ctx, provinceStr, cityStr)
+	if err != nil {
+		fmt.Printf("Warning: failed to resolve location names: %v\n", err)
+	}
+
 	// Create product object
 	product := &Product{
 		ID:                      uuid.New(),
@@ -67,6 +87,9 @@ func (s *Service) CreateProduct(ctx context.Context, userID uuid.UUID, req *Crea
 		IsFeatured:              false,
 		Province:                req.Province,
 		City:                    req.City,
+		ProvinceName:            stringToPointer(provinceName),
+		DepartmentName:          stringToPointer(departmentName),
+		SettlementName:          stringToPointer(settlementName),
 		LocationCoordinates:     req.LocationCoordinates,
 		PickupAvailable:         req.PickupAvailable,
 		DeliveryAvailable:       req.DeliveryAvailable,
@@ -81,6 +104,7 @@ func (s *Service) CreateProduct(ctx context.Context, userID uuid.UUID, req *Crea
 		SearchKeywords:          &searchKeywords,
 		CreatedAt:               time.Now(),
 		UpdatedAt:               time.Now(),
+		PublishedAt:             func() *time.Time { t := time.Now(); return &t }(), // Set to current time to auto-publish
 		Tags:                    req.Tags,
 	}
 
@@ -112,6 +136,48 @@ func (s *Service) CreateProduct(ctx context.Context, userID uuid.UUID, req *Crea
 	// Create product in database
 	if err := s.repo.CreateProduct(ctx, product); err != nil {
 		return nil, fmt.Errorf("failed to create product in database: %w", err)
+	}
+
+	return product, nil
+}
+
+// CreateProductWithImages creates a new product with images
+func (s *Service) CreateProductWithImages(ctx context.Context, userID uuid.UUID, req *CreateProductRequest, sellerInfo SellerInfo, imageFiles []*multipart.FileHeader) (*Product, error) {
+	// Create the product first
+	product, err := s.CreateProduct(ctx, userID, req, sellerInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	// Process images if provided
+	if len(imageFiles) > 0 {
+		for i, fileHeader := range imageFiles {
+			file, err := fileHeader.Open()
+			if err != nil {
+				fmt.Printf("Failed to open image file %d: %v\n", i, err)
+				continue
+			}
+
+			// Create upload request
+			uploadReq := UploadImageRequest{
+				ProductID:    product.ID,
+				AltText:      fmt.Sprintf("Product image %d", i+1),
+				IsPrimary:    i == 0, // First image is primary
+				DisplayOrder: i + 1,
+			}
+
+			// Upload image
+			productImage, err := s.imageService.UploadProductImage(ctx, userID, file, fileHeader, uploadReq)
+			if err != nil {
+				fmt.Printf("Failed to upload image %d: %v\n", i, err)
+				file.Close()
+				continue
+			}
+
+			// Add image to product
+			product.Images = append(product.Images, *productImage)
+			file.Close()
+		}
 	}
 
 	return product, nil
@@ -174,9 +240,13 @@ func (s *Service) SearchProducts(ctx context.Context, req *ProductSearchRequest)
 
 // UpdateProduct updates an existing product
 func (s *Service) UpdateProduct(ctx context.Context, userID, productID uuid.UUID, req *UpdateProductRequest) (*Product, error) {
+	fmt.Printf("[DEBUG] UpdateProduct called with userID: %v, productID: %v\n", userID, productID)
+	fmt.Printf("[DEBUG] Update request: %+v\n", req)
+
 	// Get existing product
 	existingProduct, err := s.repo.GetProductByID(ctx, productID)
 	if err != nil {
+		fmt.Printf("[ERROR] Failed to get existing product: %v\n", err)
 		return nil, fmt.Errorf("failed to get product: %w", err)
 	}
 	if existingProduct == nil {
@@ -224,6 +294,12 @@ func (s *Service) UpdateProduct(ctx context.Context, userID, productID uuid.UUID
 	if req.Province != nil {
 		updates["province"] = *req.Province
 	}
+	if req.Department != nil {
+		updates["department"] = *req.Department
+	}
+	if req.Settlement != nil {
+		updates["settlement"] = *req.Settlement
+	}
 	if req.City != nil {
 		updates["city"] = *req.City
 	}
@@ -263,6 +339,89 @@ func (s *Service) UpdateProduct(ctx context.Context, userID, productID uuid.UUID
 	}
 
 	// Return updated product
+	return s.repo.GetProductByID(ctx, productID)
+}
+
+// UpdateProductWithImages updates an existing product and processes image changes
+func (s *Service) UpdateProductWithImages(ctx context.Context, userID, productID uuid.UUID, req *UpdateProductRequest, imageFiles []*multipart.FileHeader) (*Product, error) {
+	// Update the product first
+	product, err := s.UpdateProduct(ctx, userID, productID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle existing images changes (deletion) - process when ExistingImages is provided (even if empty)
+	if req.ExistingImages != nil {
+		fmt.Printf("[DEBUG] Processing existing images: %d images to keep\n", len(req.ExistingImages))
+
+		// Get current product images
+		currentImages, err := s.imageService.GetProductImages(ctx, productID)
+		if err != nil {
+			fmt.Printf("[ERROR] Failed to get current images: %v\n", err)
+		} else {
+			// Create a map of images to keep
+			keepImages := make(map[string]bool)
+			for _, img := range req.ExistingImages {
+				keepImages[img.ID] = true
+				fmt.Printf("[DEBUG] Keeping image: %s (primary: %t)\n", img.ID, img.IsPrimary)
+			}
+
+			// Delete images not in the keep list
+			for _, currentImg := range currentImages {
+				if !keepImages[currentImg.ID.String()] {
+					fmt.Printf("[DEBUG] Deleting image: %s\n", currentImg.ID.String())
+					err := s.imageService.DeleteProductImage(ctx, userID, currentImg.ID)
+					if err != nil {
+						fmt.Printf("[ERROR] Failed to delete image %s: %v\n", currentImg.ID.String(), err)
+					}
+				}
+			}
+
+			// Update metadata for existing images (primary status, display order)
+			for _, imgInfo := range req.ExistingImages {
+				if imgUUID, err := uuid.Parse(imgInfo.ID); err == nil {
+					updates := map[string]interface{}{
+						"is_primary":    imgInfo.IsPrimary,
+						"display_order": imgInfo.DisplayOrder,
+					}
+					if err := s.imageService.UpdateImageMetadata(ctx, imgUUID, updates); err != nil {
+						fmt.Printf("[ERROR] Failed to update image metadata %s: %v\n", imgInfo.ID, err)
+					}
+				}
+			}
+		}
+	}
+
+	// Process new images if provided
+	if len(imageFiles) > 0 {
+		fmt.Printf("[DEBUG] Processing new images: %d files\n", len(imageFiles))
+		for i, fileHeader := range imageFiles {
+			file, err := fileHeader.Open()
+			if err != nil {
+				fmt.Printf("Failed to open image file %d: %v\n", i, err)
+				continue
+			}
+
+			// Create upload request
+			uploadReq := UploadImageRequest{
+				ProductID:    product.ID,
+				AltText:      fmt.Sprintf("Product image %d", i+1),
+				IsPrimary:    false, // For updates, don't set as primary by default
+				DisplayOrder: i + 1,
+			}
+
+			// Upload the image
+			_, err = s.imageService.UploadProductImage(ctx, userID, file, fileHeader, uploadReq)
+			if err != nil {
+				fmt.Printf("Failed to upload image %d: %v\n", i, err)
+				continue
+			}
+
+			file.Close()
+		}
+	}
+
+	// Return the updated product with fresh images
 	return s.repo.GetProductByID(ctx, productID)
 }
 
@@ -335,24 +494,10 @@ func (s *Service) DeleteProduct(ctx context.Context, userID, productID uuid.UUID
 
 // GetUserProducts retrieves products belonging to a specific user
 func (s *Service) GetUserProducts(ctx context.Context, userID uuid.UUID, page, pageSize int) (*ProductListResponse, error) {
-	req := &ProductSearchRequest{
-		Page:     page,
-		PageSize: pageSize,
-	}
-
-	// Add a filter for user ownership (this would need to be implemented in repository)
-	// For now, we'll get all products and filter in memory (not efficient for production)
-	products, _, err := s.repo.SearchProducts(ctx, req)
+	// Use dedicated method to get user products without published filter
+	userProducts, totalCount, err := s.repo.GetProductsByUserID(ctx, userID, page, pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user products: %w", err)
-	}
-
-	// Filter by user ID
-	userProducts := make([]*Product, 0)
-	for _, product := range products {
-		if product.UserID == userID {
-			userProducts = append(userProducts, product)
-		}
 	}
 
 	// Convert to response format
@@ -363,10 +508,10 @@ func (s *Service) GetUserProducts(ctx context.Context, userID uuid.UUID, page, p
 
 	return &ProductListResponse{
 		Products:   productList,
-		TotalCount: len(userProducts),
+		TotalCount: totalCount,
 		Page:       page,
 		PageSize:   pageSize,
-		TotalPages: (len(userProducts) + pageSize - 1) / pageSize,
+		TotalPages: (totalCount + pageSize - 1) / pageSize,
 	}, nil
 }
 
@@ -484,4 +629,11 @@ func getSliceValue(slice []string, defaultSlice []string) []string {
 		return slice
 	}
 	return defaultSlice
+}
+
+func stringToPointer(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

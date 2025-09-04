@@ -100,6 +100,9 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*User
 		LastName:     req.LastName,
 		Phone:        req.Phone,
 		CUIT:         req.CUIT,
+		CBU:          req.CBU,
+		CBUAlias:     req.CBUAlias,
+		BankName:     req.BankName,
 		BusinessName: req.BusinessName,
 		BusinessType: req.BusinessType,
 		Province:     req.Province,
@@ -232,6 +235,15 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, req *UpdateUserR
 	if req.Phone != nil {
 		updates["phone"] = *req.Phone
 	}
+	if req.CBU != nil {
+		updates["cbu"] = *req.CBU
+	}
+	if req.CBUAlias != nil {
+		updates["cbu_alias"] = *req.CBUAlias
+	}
+	if req.BankName != nil {
+		updates["bank_name"] = *req.BankName
+	}
 	if req.BusinessName != nil {
 		updates["business_name"] = *req.BusinessName
 	}
@@ -340,10 +352,161 @@ func (s *Service) UpdateVerificationLevel(ctx context.Context, userID uuid.UUID,
 	return nil
 }
 
+// IsSellerProfileComplete checks if a user has all required information to be a seller
+func (s *Service) IsSellerProfileComplete(ctx context.Context, userID uuid.UUID) (bool, error) {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get user: %w", err)
+	}
+	if user == nil {
+		return false, ErrUserNotFound
+	}
+
+	// Check required fields for seller profile
+	requiredFields := []bool{
+		user.CUIT != nil && *user.CUIT != "",
+		user.CBU != nil && *user.CBU != "",
+		user.BusinessName != nil && *user.BusinessName != "",
+		user.Phone != nil && *user.Phone != "",
+		user.Address != nil && *user.Address != "",
+		user.City != nil && *user.City != "",
+		user.Province != nil && *user.Province != "",
+	}
+
+	for _, required := range requiredFields {
+		if !required {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// UpgradeToSeller upgrades a buyer to seller with required profile information
+func (s *Service) UpgradeToSeller(ctx context.Context, userID uuid.UUID, req *SellerProfileRequest) error {
+	// Get existing user
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+	if user == nil {
+		return ErrUserNotFound
+	}
+
+	// Validate CUIT if provided
+	if req.CUIT != "" {
+		if err := s.cuitValidator.ValidateCUIT(req.CUIT); err != nil {
+			return fmt.Errorf("CUIT validation failed: %w", err)
+		}
+
+		// Clean CUIT (remove dashes for database storage)
+		cleanCUIT := strings.ReplaceAll(req.CUIT, "-", "")
+		req.CUIT = cleanCUIT
+
+		// Check if CUIT already exists (but not for this user)
+		existingCUITUser, err := s.repo.GetUserByCUIT(ctx, req.CUIT)
+		if err != nil {
+			return fmt.Errorf("failed to check existing CUIT: %w", err)
+		}
+		if existingCUITUser != nil && existingCUITUser.ID != userID {
+			return ErrCUITExists
+		}
+	}
+
+	// Clean and validate CBU format (remove spaces for validation)
+	if req.CBU != "" {
+		cleanCBU := strings.ReplaceAll(req.CBU, " ", "")
+		if len(cleanCBU) != 22 {
+			return errors.New("CBU must be 22 digits long")
+		}
+		// Store the clean CBU (without spaces)
+		req.CBU = cleanCBU
+	}
+
+	// Prepare updates for seller profile
+	updates := map[string]interface{}{
+		"role":                   "seller",
+		"cuit":                   req.CUIT,
+		"cbu":                    req.CBU,
+		"cbu_alias":              req.CBUAlias,
+		"bank_name":              req.BankName,
+		"renspa":                 req.RENSPA,
+		"establishment_name":     req.EstablishmentName,
+		"establishment_location": req.EstablishmentLocation,
+		"business_name":          req.BusinessName,
+		"business_type":          req.BusinessType,
+		"phone":                  req.Phone,
+		"address":                req.Address,
+		"city":                   req.City,
+		"province":               req.Province,
+	}
+
+	// Update user in database
+	if err := s.repo.UpdateUser(ctx, userID, updates); err != nil {
+		// Log the error details for debugging
+		fmt.Printf("Failed to upgrade user to seller. UserID: %s, Updates: %+v, Error: %v\n", userID.String(), updates, err)
+		return fmt.Errorf("failed to upgrade user to seller: %w", err)
+	}
+
+	return nil
+}
+
+// GetSellerProfile gets the seller profile information for a user
+func (s *Service) GetSellerProfile(ctx context.Context, userID uuid.UUID) (*SellerProfileResponse, error) {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
+	}
+
+	isComplete, err := s.IsSellerProfileComplete(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SellerProfileResponse{
+		CUIT:                  user.CUIT,
+		CBU:                   user.CBU,
+		CBUAlias:              user.CBUAlias,
+		BankName:              user.BankName,
+		RENSPA:                user.RENSPA,
+		EstablishmentName:     user.EstablishmentName,
+		EstablishmentLocation: user.EstablishmentLocation,
+		BusinessName:          user.BusinessName,
+		BusinessType:          user.BusinessType,
+		Phone:                 user.Phone,
+		Address:               user.Address,
+		City:                  user.City,
+		Province:              user.Province,
+		IsComplete:            isComplete,
+	}, nil
+}
+
 // DeactivateUser deactivates a user account
 func (s *Service) DeactivateUser(ctx context.Context, userID uuid.UUID) error {
 	if err := s.repo.DeleteUser(ctx, userID); err != nil {
 		return fmt.Errorf("failed to deactivate user: %w", err)
 	}
 	return nil
+}
+
+// GenerateTokenForUser generates a JWT token for a given user (used in registration)
+func (s *Service) GenerateTokenForUser(ctx context.Context, user *User) (*auth.TokenResponse, error) {
+	// Generate JWT token
+	tokenResponse, err := s.jwtManager.GenerateToken(
+		user.ID,
+		user.Email,
+		user.Role,
+		user.CUIT,
+		user.Province,
+		user.VerificationLevel,
+		user.IsVerified,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	return tokenResponse, nil
 }

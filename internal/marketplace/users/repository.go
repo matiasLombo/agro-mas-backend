@@ -76,6 +76,7 @@ func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*User, erro
 	query := `
 		SELECT 
 			id, email, password_hash, first_name, last_name, phone, cuit,
+			cbu, cbu_alias, bank_name, renspa, establishment_name, establishment_location,
 			business_name, business_type, tax_category, province, city, address,
 			CASE WHEN coordinates IS NOT NULL THEN coordinates[0] ELSE NULL END as lng, 
 			CASE WHEN coordinates IS NOT NULL THEN coordinates[1] ELSE NULL END as lat,
@@ -91,12 +92,13 @@ func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*User, erro
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.FirstName, &user.LastName,
-		&user.Phone, &user.CUIT, &user.BusinessName, &user.BusinessType,
-		&user.TaxCategory, &user.Province, &user.City, &user.Address,
-		&lng, &lat, &user.Role, &user.VerificationLevel, &user.IsActive,
-		&user.IsVerified, &user.Rating, &user.TotalSales, &user.TotalPurchases,
-		&user.TotalReviews, &user.CreatedAt, &user.UpdatedAt, &user.LastLogin,
-		&verificationDocsJSON, &preferencesJSON)
+		&user.Phone, &user.CUIT, &user.CBU, &user.CBUAlias, &user.BankName,
+		&user.RENSPA, &user.EstablishmentName, &user.EstablishmentLocation,
+		&user.BusinessName, &user.BusinessType, &user.TaxCategory, &user.Province, 
+		&user.City, &user.Address, &lng, &lat, &user.Role, &user.VerificationLevel, 
+		&user.IsActive, &user.IsVerified, &user.Rating, &user.TotalSales, 
+		&user.TotalPurchases, &user.TotalReviews, &user.CreatedAt, &user.UpdatedAt, 
+		&user.LastLogin, &verificationDocsJSON, &preferencesJSON)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -134,6 +136,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, e
 	query := `
 		SELECT 
 			id, email, password_hash, first_name, last_name, phone, cuit,
+			cbu, cbu_alias, bank_name, renspa, establishment_name, establishment_location,
 			business_name, business_type, tax_category, province, city, address,
 			CASE WHEN coordinates IS NOT NULL THEN coordinates[0] ELSE NULL END as lng, 
 			CASE WHEN coordinates IS NOT NULL THEN coordinates[1] ELSE NULL END as lat,
@@ -149,12 +152,13 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, e
 
 	err := r.db.QueryRowContext(ctx, query, email).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.FirstName, &user.LastName,
-		&user.Phone, &user.CUIT, &user.BusinessName, &user.BusinessType,
-		&user.TaxCategory, &user.Province, &user.City, &user.Address,
-		&lng, &lat, &user.Role, &user.VerificationLevel, &user.IsActive,
-		&user.IsVerified, &user.Rating, &user.TotalSales, &user.TotalPurchases,
-		&user.TotalReviews, &user.CreatedAt, &user.UpdatedAt, &user.LastLogin,
-		&verificationDocsJSON, &preferencesJSON)
+		&user.Phone, &user.CUIT, &user.CBU, &user.CBUAlias, &user.BankName,
+		&user.RENSPA, &user.EstablishmentName, &user.EstablishmentLocation,
+		&user.BusinessName, &user.BusinessType, &user.TaxCategory, &user.Province,
+		&user.City, &user.Address, &lng, &lat, &user.Role, &user.VerificationLevel,
+		&user.IsActive, &user.IsVerified, &user.Rating, &user.TotalSales,
+		&user.TotalPurchases, &user.TotalReviews, &user.CreatedAt, &user.UpdatedAt,
+		&user.LastLogin, &verificationDocsJSON, &preferencesJSON)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -192,6 +196,7 @@ func (r *Repository) GetUserByCUIT(ctx context.Context, cuit string) (*User, err
 	query := `
 		SELECT 
 			id, email, password_hash, first_name, last_name, phone, cuit,
+			cbu, cbu_alias, bank_name, renspa, establishment_name, establishment_location,
 			business_name, business_type, tax_category, province, city, address,
 			CASE WHEN coordinates IS NOT NULL THEN coordinates[0] ELSE NULL END as lng, 
 			CASE WHEN coordinates IS NOT NULL THEN coordinates[1] ELSE NULL END as lat,
@@ -207,12 +212,13 @@ func (r *Repository) GetUserByCUIT(ctx context.Context, cuit string) (*User, err
 
 	err := r.db.QueryRowContext(ctx, query, cuit).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.FirstName, &user.LastName,
-		&user.Phone, &user.CUIT, &user.BusinessName, &user.BusinessType,
-		&user.TaxCategory, &user.Province, &user.City, &user.Address,
-		&lng, &lat, &user.Role, &user.VerificationLevel, &user.IsActive,
-		&user.IsVerified, &user.Rating, &user.TotalSales, &user.TotalPurchases,
-		&user.TotalReviews, &user.CreatedAt, &user.UpdatedAt, &user.LastLogin,
-		&verificationDocsJSON, &preferencesJSON)
+		&user.Phone, &user.CUIT, &user.CBU, &user.CBUAlias, &user.BankName,
+		&user.RENSPA, &user.EstablishmentName, &user.EstablishmentLocation,
+		&user.BusinessName, &user.BusinessType, &user.TaxCategory, &user.Province,
+		&user.City, &user.Address, &lng, &lat, &user.Role, &user.VerificationLevel,
+		&user.IsActive, &user.IsVerified, &user.Rating, &user.TotalSales,
+		&user.TotalPurchases, &user.TotalReviews, &user.CreatedAt, &user.UpdatedAt,
+		&user.LastLogin, &verificationDocsJSON, &preferencesJSON)
 
 	if err != nil {
 		if err == sql.ErrNoRows {

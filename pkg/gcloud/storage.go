@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -58,6 +59,29 @@ func NewStorageClient(ctx context.Context, projectID, credentialsFile, bucketNam
 	}, nil
 }
 
+func NewStorageClientWithEmulator(ctx context.Context, projectID, bucketName, emulatorHost string) (*StorageClient, error) {
+	// Set the emulator host environment variable
+	os.Setenv("STORAGE_EMULATOR_HOST", emulatorHost)
+	
+	// Create client without credentials for emulator
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create emulator storage client: %w", err)
+	}
+
+	// Create bucket if it doesn't exist (emulator starts empty)
+	bucket := client.Bucket(bucketName)
+	if err := bucket.Create(ctx, projectID, nil); err != nil {
+		// Ignore error if bucket already exists
+		fmt.Printf("Bucket creation result (may already exist): %v\n", err)
+	}
+
+	return &StorageClient{
+		client: client,
+		bucket: bucketName,
+	}, nil
+}
+
 func (sc *StorageClient) Close() error {
 	return sc.client.Close()
 }
@@ -100,8 +124,8 @@ func (sc *StorageClient) UploadFile(ctx context.Context, file multipart.File, he
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
 
-	// Make object public if requested
-	if options.PublicRead {
+	// Make object public if requested (skip for emulator)
+	if options.PublicRead && os.Getenv("STORAGE_EMULATOR_HOST") == "" {
 		if err := sc.makeObjectPublic(ctx, storagePath); err != nil {
 			return nil, fmt.Errorf("failed to make object public: %w", err)
 		}
@@ -157,8 +181,8 @@ func (sc *StorageClient) UploadFileFromBytes(ctx context.Context, data []byte, f
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
 
-	// Make object public if requested
-	if options.PublicRead {
+	// Make object public if requested (skip for emulator)
+	if options.PublicRead && os.Getenv("STORAGE_EMULATOR_HOST") == "" {
 		if err := sc.makeObjectPublic(ctx, storagePath); err != nil {
 			return nil, fmt.Errorf("failed to make object public: %w", err)
 		}
@@ -305,6 +329,15 @@ func (sc *StorageClient) generateStoragePath(fileName string, options UploadOpti
 }
 
 func (sc *StorageClient) generatePublicURL(storagePath string) string {
+	// Use emulator URL if STORAGE_EMULATOR_HOST is set
+	if emulatorHost := os.Getenv("STORAGE_EMULATOR_HOST"); emulatorHost != "" {
+		// URL-encode the storage path for emulator API
+		encodedPath := strings.ReplaceAll(storagePath, "/", "%2F")
+		// Remove http:// prefix if present since we add it in the format string
+		cleanHost := strings.TrimPrefix(emulatorHost, "http://")
+		cleanHost = strings.TrimPrefix(cleanHost, "https://")
+		return fmt.Sprintf("http://%s/download/storage/v1/b/%s/o/%s?alt=media", cleanHost, sc.bucket, encodedPath)
+	}
 	return fmt.Sprintf("https://storage.googleapis.com/%s/%s", sc.bucket, storagePath)
 }
 
