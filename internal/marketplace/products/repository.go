@@ -32,13 +32,13 @@ func (r *Repository) CreateProduct(ctx context.Context, product *Product) error 
 		INSERT INTO products (
 			id, user_id, title, description, category, subcategory, price, price_type,
 			currency, unit, quantity, available_from, available_until, is_active,
-			is_featured, province, city, location_coordinates, pickup_available,
+			is_featured, province, department, settlement, city, province_name, department_name, settlement_name, location_coordinates, pickup_available,
 			delivery_available, delivery_radius, seller_name, seller_phone,
 			seller_rating, seller_verification_level, search_keywords, metadata, tags
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-			ST_GeomFromText('POINT(' || $18 || ' ' || $19 || ')', 4326),
-			$20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+			CASE WHEN $23::float IS NOT NULL AND $24::float IS NOT NULL THEN POINT($23, $24) ELSE NULL END,
+			$25, $26, $27, $28, $29, $30, $31, $32, $33, $34
 		)`
 
 	var lng, lat sql.NullFloat64
@@ -55,6 +55,8 @@ func (r *Repository) CreateProduct(ctx context.Context, product *Product) error 
 		if err != nil {
 			return fmt.Errorf("failed to marshal metadata: %w", err)
 		}
+	} else {
+		metadataJSON = []byte("{}")
 	}
 
 	_, err = tx.ExecContext(ctx, query,
@@ -62,7 +64,7 @@ func (r *Repository) CreateProduct(ctx context.Context, product *Product) error 
 		product.Category, product.Subcategory, product.Price, product.PriceType,
 		product.Currency, product.Unit, product.Quantity, product.AvailableFrom,
 		product.AvailableUntil, product.IsActive, product.IsFeatured,
-		product.Province, product.City, lng, lat, product.PickupAvailable,
+		product.Province, product.Department, product.Settlement, product.City, product.ProvinceName, product.DepartmentName, product.SettlementName, lng, lat, product.PickupAvailable,
 		product.DeliveryAvailable, product.DeliveryRadius, product.SellerName,
 		product.SellerPhone, product.SellerRating, product.SellerVerificationLevel,
 		product.SearchKeywords, metadataJSON, pq.Array(product.Tags))
@@ -102,7 +104,7 @@ func (r *Repository) GetProductByID(ctx context.Context, id uuid.UUID) (*Product
 		SELECT 
 			id, user_id, title, description, category, subcategory, price, price_type,
 			currency, unit, quantity, available_from, available_until, is_active,
- 			is_featured, province, city, 
+ 			is_featured, province, department, settlement, city, province_name, department_name, settlement_name,
 			CASE WHEN location_coordinates IS NOT NULL THEN location_coordinates[0] ELSE NULL END as lng,
 			CASE WHEN location_coordinates IS NOT NULL THEN location_coordinates[1] ELSE NULL END as lat, 
 			pickup_available, delivery_available,
@@ -122,7 +124,7 @@ func (r *Repository) GetProductByID(ctx context.Context, id uuid.UUID) (*Product
 		&product.Category, &product.Subcategory, &product.Price, &product.PriceType,
 		&product.Currency, &product.Unit, &product.Quantity, &product.AvailableFrom,
 		&product.AvailableUntil, &product.IsActive, &product.IsFeatured,
-		&product.Province, &product.City, &lng, &lat, &product.PickupAvailable,
+		&product.Province, &product.Department, &product.Settlement, &product.City, &product.ProvinceName, &product.DepartmentName, &product.SettlementName, &lng, &lat, &product.PickupAvailable,
 		&product.DeliveryAvailable, &product.DeliveryRadius, &product.SellerName,
 		&product.SellerPhone, &product.SellerRating, &product.SellerVerificationLevel,
 		&product.ViewsCount, &product.FavoritesCount, &product.InquiriesCount,
@@ -161,7 +163,7 @@ func (r *Repository) GetProductByID(ctx context.Context, id uuid.UUID) (*Product
 
 // SearchProducts searches for products with filters
 func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchRequest) ([]*Product, int, error) {
-	whereConditions := []string{"p.is_active = true", "p.published_at IS NOT NULL"}
+	whereConditions := []string{"p.is_active = true"}
 	args := []interface{}{}
 	argIndex := 1
 
@@ -239,6 +241,12 @@ func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchReque
 		argIndex++
 	}
 
+	if req.ExcludeUserID != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("p.user_id != $%d", argIndex))
+		args = append(args, *req.ExcludeUserID)
+		argIndex++
+	}
+
 	whereClause := strings.Join(whereConditions, " AND ")
 
 	// Count total results
@@ -288,7 +296,7 @@ func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchReque
 		SELECT 
 			p.id, p.user_id, p.title, p.description, p.category, p.subcategory,
 			p.price, p.price_type, p.currency, p.unit, p.quantity, p.available_from,
-			p.available_until, p.is_active, p.is_featured, p.province, p.city,
+			p.available_until, p.is_active, p.is_featured, p.province, p.city, p.province_name, p.department_name, p.settlement_name,
 			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[0] ELSE NULL END as lng,
 			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[1] ELSE NULL END as lat,
 			p.pickup_available, p.delivery_available, p.delivery_radius,
@@ -320,7 +328,7 @@ func (r *Repository) SearchProducts(ctx context.Context, req *ProductSearchReque
 			&product.Category, &product.Subcategory, &product.Price, &product.PriceType,
 			&product.Currency, &product.Unit, &product.Quantity, &product.AvailableFrom,
 			&product.AvailableUntil, &product.IsActive, &product.IsFeatured,
-			&product.Province, &product.City, &lng, &lat, &product.PickupAvailable,
+			&product.Province, &product.City, &product.ProvinceName, &product.DepartmentName, &product.SettlementName, &lng, &lat, &product.PickupAvailable,
 			&product.DeliveryAvailable, &product.DeliveryRadius, &product.SellerName,
 			&product.SellerPhone, &product.SellerRating, &product.SellerVerificationLevel,
 			&product.ViewsCount, &product.FavoritesCount, &product.InquiriesCount,
@@ -380,21 +388,24 @@ func (r *Repository) insertTransportDetails(ctx context.Context, tx *sql.Tx, det
 }
 
 func (r *Repository) insertLivestockDetails(ctx context.Context, tx *sql.Tx, details *LivestockDetails) error {
-	var vaccinationsJSON, breedingHistoryJSON []byte
-	var err error
+	var vaccinationsJSON, breedingHistoryJSON sql.NullString
 
 	if details.Vaccinations != nil {
-		vaccinationsJSON, err = json.Marshal(details.Vaccinations)
+		jsonData, err := json.Marshal(details.Vaccinations)
 		if err != nil {
 			return fmt.Errorf("failed to marshal vaccinations: %w", err)
 		}
+		vaccinationsJSON.String = string(jsonData)
+		vaccinationsJSON.Valid = true
 	}
 
 	if details.BreedingHistory != nil {
-		breedingHistoryJSON, err = json.Marshal(details.BreedingHistory)
+		jsonData, err := json.Marshal(details.BreedingHistory)
 		if err != nil {
 			return fmt.Errorf("failed to marshal breeding history: %w", err)
 		}
+		breedingHistoryJSON.String = string(jsonData)
+		breedingHistoryJSON.Valid = true
 	}
 
 	query := `
@@ -404,7 +415,7 @@ func (r *Repository) insertLivestockDetails(ctx context.Context, tx *sql.Tx, det
 			is_organic, is_pregnant, breeding_history, genetic_information
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 
-	_, err = tx.ExecContext(ctx, query,
+	_, err := tx.ExecContext(ctx, query,
 		details.ProductID, details.AnimalType, details.Breed, details.AgeMonths,
 		details.WeightKg, details.Gender, pq.Array(details.HealthCertificates),
 		vaccinationsJSON, details.LastVeterinaryCheck, details.IsOrganic,
@@ -593,6 +604,7 @@ func (r *Repository) getSuppliesDetails(ctx context.Context, productID uuid.UUID
 
 // UpdateProduct updates an existing product
 func (r *Repository) UpdateProduct(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	fmt.Printf("[DEBUG] Repository UpdateProduct called with id: %v, updates: %+v\n", id, updates)
 	if len(updates) == 0 {
 		return nil
 	}
@@ -604,9 +616,29 @@ func (r *Repository) UpdateProduct(ctx context.Context, id uuid.UUID, updates ma
 	for field, value := range updates {
 		if field == "location_coordinates" && value != nil {
 			if coords, ok := value.(*Point); ok {
-				setParts = append(setParts, fmt.Sprintf("location_coordinates = ST_GeomFromText('POINT(%f %f)', 4326)", coords.Lng, coords.Lat))
+				setParts = append(setParts, fmt.Sprintf("location_coordinates = POINT(%f, %f)", coords.Lng, coords.Lat))
+				continue
+			} else if coordsMap, ok := value.(map[string]interface{}); ok {
+				if lat, latOk := coordsMap["lat"].(float64); latOk {
+					if lng, lngOk := coordsMap["lng"].(float64); lngOk {
+						setParts = append(setParts, fmt.Sprintf("location_coordinates = POINT(%f, %f)", lng, lat))
+						continue
+					}
+				}
+			}
+		}
+		// Handle tags field for PostgreSQL array
+		if field == "tags" && value != nil {
+			if tags, ok := value.([]string); ok {
+				setParts = append(setParts, fmt.Sprintf("%s = $%d", field, argIndex))
+				args = append(args, pq.Array(tags))
+				argIndex++
 				continue
 			}
+		}
+		// Skip nil values for optional fields
+		if value == nil {
+			continue
 		}
 		setParts = append(setParts, fmt.Sprintf("%s = $%d", field, argIndex))
 		args = append(args, value)
@@ -615,11 +647,26 @@ func (r *Repository) UpdateProduct(ctx context.Context, id uuid.UUID, updates ma
 
 	setParts = append(setParts, "updated_at = NOW()")
 
+	if len(setParts) == 1 { // Only "updated_at = NOW()" was added
+		// No actual fields to update, just update the timestamp
+		query := "UPDATE products SET updated_at = NOW() WHERE id = $1"
+		_, err := r.db.ExecContext(ctx, query, id)
+		if err != nil {
+			fmt.Printf("[ERROR] SQL execution failed: %v\n", err)
+			return fmt.Errorf("failed to update product: %w", err)
+		}
+		return nil
+	}
+
 	query := fmt.Sprintf("UPDATE products SET %s WHERE id = $%d", strings.Join(setParts, ", "), argIndex)
 	args = append(args, id)
 
+	fmt.Printf("[DEBUG] Executing query: %s\n", query)
+	fmt.Printf("[DEBUG] Args: %v\n", args)
+
 	_, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
+		fmt.Printf("[ERROR] SQL execution failed: %v\n", err)
 		return fmt.Errorf("failed to update product: %w", err)
 	}
 
@@ -641,4 +688,95 @@ func (r *Repository) IncrementViewsCount(ctx context.Context, productID uuid.UUI
 	query := `UPDATE products SET views_count = views_count + 1, updated_at = NOW() WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, productID)
 	return err
+}
+
+// GetProductsByUserID retrieves products belonging to a specific user (including unpublished ones)
+func (r *Repository) GetProductsByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]*Product, int, error) {
+	offset := (page - 1) * pageSize
+
+	// Count query
+	countQuery := `SELECT COUNT(*) FROM products WHERE user_id = $1 AND is_active = true`
+	var totalCount int
+	err := r.db.QueryRowContext(ctx, countQuery, userID).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count user products: %w", err)
+	}
+
+	// Main query - get products without published filter
+	query := `
+		SELECT 
+			p.id, p.user_id, p.title, p.description, p.category, p.subcategory,
+			p.price, p.price_type, p.currency, p.unit, p.quantity,
+			p.available_from, p.available_until, p.is_active, p.is_featured,
+			p.province, p.city, p.province_name, p.department_name, p.settlement_name,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[0] ELSE NULL END as lng,
+			CASE WHEN p.location_coordinates IS NOT NULL THEN p.location_coordinates[1] ELSE NULL END as lat, 
+			p.pickup_available, p.delivery_available, p.delivery_radius,
+			p.seller_name, p.seller_phone, p.seller_rating, p.seller_verification_level,
+			p.views_count, p.favorites_count, p.inquiries_count,
+			p.search_keywords, p.created_at, p.updated_at, p.published_at, p.expires_at,
+			p.metadata, p.tags
+		FROM products p
+		WHERE p.user_id = $1 AND p.is_active = true
+		ORDER BY p.created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.QueryContext(ctx, query, userID, pageSize, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query user products: %w", err)
+	}
+	defer rows.Close()
+
+	var products []*Product
+	for rows.Next() {
+		product := &Product{}
+		var lng, lat sql.NullFloat64
+		var metadataJSON []byte
+
+		err := rows.Scan(
+			&product.ID, &product.UserID, &product.Title, &product.Description,
+			&product.Category, &product.Subcategory, &product.Price, &product.PriceType,
+			&product.Currency, &product.Unit, &product.Quantity, &product.AvailableFrom,
+			&product.AvailableUntil, &product.IsActive, &product.IsFeatured,
+			&product.Province, &product.City, &product.ProvinceName, &product.DepartmentName, &product.SettlementName, &lng, &lat,
+			&product.PickupAvailable, &product.DeliveryAvailable, &product.DeliveryRadius,
+			&product.SellerName, &product.SellerPhone, &product.SellerRating,
+			&product.SellerVerificationLevel, &product.ViewsCount, &product.FavoritesCount,
+			&product.InquiriesCount, &product.SearchKeywords, &product.CreatedAt,
+			&product.UpdatedAt, &product.PublishedAt, &product.ExpiresAt,
+			&metadataJSON, pq.Array(&product.Tags))
+
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user product: %w", err)
+		}
+
+		// Handle location coordinates
+		if lng.Valid && lat.Valid {
+			product.LocationCoordinates = &Point{
+				Lng: lng.Float64,
+				Lat: lat.Float64,
+			}
+		}
+
+		// Handle metadata
+		if len(metadataJSON) > 0 {
+			var metadata ProductMetadata
+			if err := json.Unmarshal(metadataJSON, &metadata); err == nil {
+				product.Metadata = &metadata
+			}
+		}
+
+		// Load category-specific details and images for each product
+		if err := r.loadProductDetails(ctx, product); err != nil {
+			return nil, 0, fmt.Errorf("failed to load product details: %w", err)
+		}
+
+		products = append(products, product)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate user products: %w", err)
+	}
+
+	return products, totalCount, nil
 }

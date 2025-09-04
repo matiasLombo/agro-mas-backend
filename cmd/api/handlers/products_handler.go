@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"agro-mas-backend/internal/marketplace/products"
 	"agro-mas-backend/internal/marketplace/users"
@@ -47,21 +51,70 @@ func (h *ProductsHandler) CreateProduct(c *gin.Context) {
 
 	if !isComplete {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Seller profile incomplete",
-			"code":  "SELLER_PROFILE_INCOMPLETE",
+			"error":   "Seller profile incomplete",
+			"code":    "SELLER_PROFILE_INCOMPLETE",
 			"message": "You must complete your seller profile before publishing products",
 		})
 		return
 	}
 
 	var req products.CreateProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
-			"code":  "INVALID_REQUEST",
-			"details": err.Error(),
-		})
-		return
+	var imageFiles []*multipart.FileHeader
+
+	// Check if this is multipart form data (with images) or JSON
+	contentType := c.GetHeader("Content-Type")
+	if contentType != "" && strings.HasPrefix(contentType, "multipart/form-data") {
+		// Handle FormData with images
+		productJSON := c.PostForm("product")
+		if productJSON == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Missing product data",
+				"code":  "MISSING_PRODUCT_DATA",
+			})
+			return
+		}
+
+		fmt.Printf("[DEBUG] POST: About to parse JSON: '%s'\n", productJSON)
+		if err := json.Unmarshal([]byte(productJSON), &req); err != nil {
+			fmt.Printf("[ERROR] POST: Failed to unmarshal product JSON: %v\n", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid product JSON in form data",
+				"code":    "INVALID_PRODUCT_JSON",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Handle image files
+		form, err := c.MultipartForm()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Failed to parse multipart form",
+				"code":    "MULTIPART_PARSE_ERROR",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Process image files
+		if files := form.File["image"]; len(files) > 0 {
+			fmt.Printf("[DEBUG] Received %d image files\n", len(files))
+			imageFiles = files
+			for i, file := range files {
+				fmt.Printf("[DEBUG] Image %d: %s (%d bytes)\n", i+1, file.Filename, file.Size)
+			}
+		}
+
+	} else {
+		// Handle regular JSON request
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid request format",
+				"code":    "INVALID_REQUEST",
+				"details": err.Error(),
+			})
+			return
+		}
 	}
 
 	// Get seller information from context
@@ -72,8 +125,23 @@ func (h *ProductsHandler) CreateProduct(c *gin.Context) {
 		VerificationLevel: 2,
 	}
 
-	product, err := h.productService.CreateProduct(c.Request.Context(), userID.(uuid.UUID), &req, sellerInfo)
+	var product *products.Product
+
+	// Create product - use CreateProductWithImages if we have image files, otherwise use CreateProduct
+	if len(imageFiles) > 0 {
+		// Create product with images
+		product, err = h.productService.CreateProductWithImages(c.Request.Context(), userID.(uuid.UUID), &req, sellerInfo, imageFiles)
+	} else {
+		// Create product without images
+		product, err = h.productService.CreateProduct(c.Request.Context(), userID.(uuid.UUID), &req, sellerInfo)
+	}
 	if err != nil {
+		// Enhanced logging for debugging
+		fmt.Printf("[ERROR] Product creation failed: %v\n", err)
+		fmt.Printf("[DEBUG] Request data: %+v\n", req)
+		fmt.Printf("[DEBUG] User ID: %v\n", userID)
+		fmt.Printf("[DEBUG] Seller info: %+v\n", sellerInfo)
+
 		status := http.StatusInternalServerError
 		code := "PRODUCT_CREATION_FAILED"
 
@@ -89,6 +157,7 @@ func (h *ProductsHandler) CreateProduct(c *gin.Context) {
 		c.JSON(status, gin.H{
 			"error": err.Error(),
 			"code":  code,
+			"debug": fmt.Sprintf("Full error: %v", err),
 		})
 		return
 	}
@@ -129,21 +198,36 @@ func (h *ProductsHandler) GetProduct(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"product": product,
-	})
+	// Get real seller information
+	if seller, err := h.userService.GetUserByID(c.Request.Context(), product.UserID); err == nil && seller != nil {
+		// Update seller information with real data
+		if seller.BusinessName != nil && *seller.BusinessName != "" {
+			product.SellerName = seller.BusinessName
+		} else {
+			fullName := fmt.Sprintf("%s %s", seller.FirstName, seller.LastName)
+			product.SellerName = &fullName
+		}
+
+		// Update other seller fields if available
+		if seller.Rating > 0 {
+			product.SellerRating = &seller.Rating
+		}
+		product.SellerVerificationLevel = &seller.VerificationLevel
+	}
+
+	c.JSON(http.StatusOK, product)
 }
 
 // SearchProducts handles product search
 func (h *ProductsHandler) SearchProducts(c *gin.Context) {
 	req := &products.ProductSearchRequest{
-		Query:             c.Query("query"),
-		Category:          c.Query("category"),
-		Subcategory:       c.Query("subcategory"),
-		Province:          c.Query("province"),
-		City:              c.Query("city"),
-		PriceType:         c.Query("price_type"),
-		SortBy:            c.Query("sort_by"),
+		Query:       c.Query("query"),
+		Category:    c.Query("category"),
+		Subcategory: c.Query("subcategory"),
+		Province:    c.Query("province"),
+		City:        c.Query("city"),
+		PriceType:   c.Query("price_type"),
+		SortBy:      c.Query("sort_by"),
 	}
 
 	// Parse optional numeric parameters
@@ -196,14 +280,39 @@ func (h *ProductsHandler) SearchProducts(c *gin.Context) {
 		req.Tags = tags
 	}
 
+	// If user is authenticated, exclude their own products
+	if userID, exists := c.Get("user_id"); exists {
+		userUUID := userID.(uuid.UUID)
+		req.ExcludeUserID = &userUUID
+	}
+
 	response, err := h.productService.SearchProducts(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to search products",
-			"code":  "SEARCH_FAILED",
+			"error":   "Failed to search products",
+			"code":    "SEARCH_FAILED",
 			"details": err.Error(),
 		})
 		return
+	}
+
+	// Enrich products with real seller information
+	for i := range response.Products {
+		if seller, err := h.userService.GetUserByID(c.Request.Context(), response.Products[i].UserID); err == nil && seller != nil {
+			// Update seller information with real data
+			if seller.BusinessName != nil && *seller.BusinessName != "" {
+				response.Products[i].SellerName = seller.BusinessName
+			} else {
+				fullName := fmt.Sprintf("%s %s", seller.FirstName, seller.LastName)
+				response.Products[i].SellerName = &fullName
+			}
+
+			// Update other seller fields if available
+			if seller.Rating > 0 {
+				response.Products[i].SellerRating = &seller.Rating
+			}
+			response.Products[i].SellerVerificationLevel = &seller.VerificationLevel
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -211,8 +320,12 @@ func (h *ProductsHandler) SearchProducts(c *gin.Context) {
 
 // UpdateProduct handles product updates
 func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
+	fmt.Printf("[DEBUG] UpdateProduct handler called - Method: %s, URL: %s\n", c.Request.Method, c.Request.URL.String())
+	fmt.Printf("[DEBUG] Request Headers: %v\n", c.Request.Header)
+
 	userID, exists := c.Get("user_id")
 	if !exists {
+		fmt.Printf("[ERROR] User not authenticated\n")
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
 			"code":  "AUTH_REQUIRED",
@@ -221,8 +334,10 @@ func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
 	}
 
 	productIDStr := c.Param("id")
+	fmt.Printf("[DEBUG] Product ID from URL: %s\n", productIDStr)
 	productID, err := uuid.Parse(productIDStr)
 	if err != nil {
+		fmt.Printf("[ERROR] Invalid product ID format: %s\n", productIDStr)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Invalid product ID format",
 			"code":  "INVALID_PRODUCT_ID",
@@ -231,17 +346,92 @@ func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
 	}
 
 	var req products.UpdateProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
-			"code":  "INVALID_REQUEST",
-			"details": err.Error(),
-		})
-		return
+	var imageFiles []*multipart.FileHeader
+
+	// Check if this is multipart form data (with images) or JSON
+	contentType := c.GetHeader("Content-Type")
+	fmt.Printf("[DEBUG] Update PUT request Content-Type: %s\n", contentType)
+	if contentType != "" && len(contentType) >= 19 && contentType[:19] == "multipart/form-data" {
+		fmt.Printf("[DEBUG] Processing multipart form data for update\n")
+		// Handle FormData with images
+		productJSON := c.PostForm("product")
+		fmt.Printf("[DEBUG] Product JSON from form: %s\n", productJSON)
+		if productJSON == "" {
+			fmt.Printf("[ERROR] Missing product data in form\n")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Missing product data",
+				"code":  "MISSING_PRODUCT_DATA",
+			})
+			return
+		}
+
+		fmt.Printf("[DEBUG] PUT: About to parse JSON: '%s'\n", productJSON)
+		fmt.Printf("[DEBUG] PUT: JSON length: %d\n", len(productJSON))
+
+		if err := json.Unmarshal([]byte(productJSON), &req); err != nil {
+			fmt.Printf("[ERROR] PUT: Failed to unmarshal product JSON: %v\n", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid request format",
+				"code":    "INVALID_REQUEST",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Handle image files
+		form, err := c.MultipartForm()
+		if err != nil {
+			fmt.Printf("[ERROR] Failed to parse multipart form: %v\n", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Failed to parse multipart form",
+				"code":    "MULTIPART_PARSE_ERROR",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Process image files
+		if files := form.File["image"]; len(files) > 0 {
+			fmt.Printf("[DEBUG] Received %d image files for update\n", len(files))
+			imageFiles = files
+			for i, file := range files {
+				fmt.Printf("[DEBUG] Image %d: %s (%d bytes)\n", i+1, file.Filename, file.Size)
+			}
+		} else {
+			fmt.Printf("[DEBUG] No image files found in form\n")
+		}
+
+	} else {
+		// Handle regular JSON request
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid request format",
+				"code":    "INVALID_REQUEST",
+				"details": err.Error(),
+			})
+			return
+		}
 	}
 
-	product, err := h.productService.UpdateProduct(c.Request.Context(), userID.(uuid.UUID), productID, &req)
+	var product *products.Product
+
+	// Update product - use UpdateProductWithImages if we have image files OR existing_images changes, otherwise use UpdateProduct
+	hasImageChanges := len(imageFiles) > 0 || req.ExistingImages != nil
+	if hasImageChanges {
+		// Update product with images (new images or existing image changes)
+		product, err = h.productService.UpdateProductWithImages(c.Request.Context(), userID.(uuid.UUID), productID, &req, imageFiles)
+	} else {
+		// Update product without images
+		product, err = h.productService.UpdateProduct(c.Request.Context(), userID.(uuid.UUID), productID, &req)
+	}
+
 	if err != nil {
+		// Enhanced logging for debugging
+		fmt.Printf("[ERROR] Product update failed: %v\n", err)
+		fmt.Printf("[DEBUG] Update request data: %+v\n", req)
+		fmt.Printf("[DEBUG] User ID: %v\n", userID)
+		fmt.Printf("[DEBUG] Product ID: %v\n", productID)
+
 		status := http.StatusInternalServerError
 		code := "PRODUCT_UPDATE_FAILED"
 
@@ -257,6 +447,7 @@ func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
 		c.JSON(status, gin.H{
 			"error": err.Error(),
 			"code":  code,
+			"debug": fmt.Sprintf("Full error: %v", err),
 		})
 		return
 	}
@@ -437,14 +628,39 @@ func (h *ProductsHandler) GetUserProducts(c *gin.Context) {
 	response, err := h.productService.GetUserProducts(c.Request.Context(), userID.(uuid.UUID), page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to get user products",
-			"code":  "USER_PRODUCTS_FETCH_FAILED",
+			"error":   "Failed to get user products",
+			"code":    "USER_PRODUCTS_FETCH_FAILED",
 			"details": err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// GetProductImages retrieves all images for a product
+func (h *ProductsHandler) GetProductImages(c *gin.Context) {
+	productIDStr := c.Param("id")
+	productID, err := uuid.Parse(productIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid product ID format",
+			"code":  "INVALID_PRODUCT_ID",
+		})
+		return
+	}
+
+	images, err := h.imageService.GetProductImages(c.Request.Context(), productID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get product images",
+			"code":    "IMAGES_FETCH_FAILED",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, images)
 }
 
 // UploadProductImage handles product image uploads
@@ -482,8 +698,8 @@ func (h *ProductsHandler) UploadProductImage(c *gin.Context) {
 	var req products.UploadImageRequest
 	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid form data",
-			"code":  "INVALID_FORM_DATA",
+			"error":   "Invalid form data",
+			"code":    "INVALID_FORM_DATA",
 			"details": err.Error(),
 		})
 		return
@@ -492,8 +708,8 @@ func (h *ProductsHandler) UploadProductImage(c *gin.Context) {
 	image, err := h.imageService.UploadProductImage(c.Request.Context(), userID.(uuid.UUID), file, header, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to upload image",
-			"code":  "IMAGE_UPLOAD_FAILED",
+			"error":   "Failed to upload image",
+			"code":    "IMAGE_UPLOAD_FAILED",
 			"details": err.Error(),
 		})
 		return
@@ -506,19 +722,20 @@ func (h *ProductsHandler) UploadProductImage(c *gin.Context) {
 }
 
 // RegisterRoutes registers product routes
-func (h *ProductsHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware, sellerMiddleware gin.HandlerFunc) {
+func (h *ProductsHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware, optionalAuthMiddleware, sellerMiddleware gin.HandlerFunc) {
 	products := router.Group("/products")
 	{
-		// Public routes
-		products.GET("/search", h.SearchProducts)
+		// Public routes with optional authentication
+		products.GET("/search", optionalAuthMiddleware, h.SearchProducts)
 		products.GET("/:id", h.GetProduct)
+		products.GET("/:id/images", h.GetProductImages)
 
 		// Protected routes
 		protected := products.Group("/")
 		protected.Use(authMiddleware)
 		{
 			protected.GET("/my", h.GetUserProducts)
-			
+
 			// Seller-only routes
 			seller := protected.Group("/")
 			seller.Use(sellerMiddleware)

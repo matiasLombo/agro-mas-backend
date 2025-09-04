@@ -67,9 +67,18 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 	}
 }
 
-// LoggerMiddleware configures structured logging
+// LoggerMiddleware configures structured logging with debug for PUT requests
 func LoggerMiddleware() gin.HandlerFunc {
 	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		// Add extra debug for PUT requests
+		if param.Method == "PUT" && param.StatusCode == 400 {
+			fmt.Printf("[MIDDLEWARE DEBUG] PUT request failed with 400\n")
+			fmt.Printf("[MIDDLEWARE DEBUG] Path: %s\n", param.Path)
+			fmt.Printf("[MIDDLEWARE DEBUG] Content-Type: %s\n", param.Request.Header.Get("Content-Type"))
+			fmt.Printf("[MIDDLEWARE DEBUG] Content-Length: %s\n", param.Request.Header.Get("Content-Length"))
+			fmt.Printf("[MIDDLEWARE DEBUG] Error: %s\n", param.ErrorMessage)
+		}
+		
 		return fmt.Sprintf(`{"time":"%s","method":"%s","path":"%s","protocol":"%s","status":%d,"latency":"%s","client_ip":"%s","user_agent":"%s","errors":"%s"}%s`,
 			param.TimeStamp.Format(time.RFC3339),
 			param.Method,
@@ -93,10 +102,15 @@ func APIVersionMiddleware(version string) gin.HandlerFunc {
 	}
 }
 
-// ContentTypeMiddleware ensures JSON content type for API responses
+// ContentTypeMiddleware ensures JSON content type for API responses (not for requests)
 func ContentTypeMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Content-Type", "application/json; charset=utf-8")
+		// Process the request first
 		c.Next()
+		
+		// Only set JSON content type if not already set (don't override multipart responses)
+		if c.GetHeader("Content-Type") == "" {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+		}
 	}
 }

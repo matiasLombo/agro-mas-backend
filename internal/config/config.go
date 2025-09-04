@@ -54,6 +54,8 @@ type GoogleCloudConfig struct {
 	CredentialsFile   string
 	StorageBucket     string
 	CloudSQLInstance  string
+	UseEmulator       bool
+	EmulatorHost      string
 }
 
 type WhatsAppConfig struct {
@@ -88,8 +90,10 @@ func Load() (*Config, error) {
 		GoogleCloud: GoogleCloudConfig{
 			ProjectID:         getEnv("GOOGLE_CLOUD_PROJECT", ""),
 			CredentialsFile:   getEnv("GOOGLE_APPLICATION_CREDENTIALS", ""),
-			StorageBucket:     getEnv("STORAGE_BUCKET", ""),
+			StorageBucket:     getEnv("GOOGLE_CLOUD_STORAGE_BUCKET", ""),
 			CloudSQLInstance:  getEnv("CLOUD_SQL_INSTANCE", ""),
+			UseEmulator:       getEnv("GOOGLE_CLOUD_USE_EMULATOR", "false") == "true",
+			EmulatorHost:      getEnv("GOOGLE_CLOUD_STORAGE_EMULATOR_HOST", ""),
 		},
 		WhatsApp: WhatsAppConfig{
 			APIUrl:         getEnv("WHATSAPP_API_URL", "https://api.whatsapp.com/send"),

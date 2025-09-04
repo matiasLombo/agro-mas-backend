@@ -23,12 +23,15 @@ func (r *Repository) CreateUser(ctx context.Context, user *User) error {
 	query := `
 		INSERT INTO users (
 			id, email, password_hash, first_name, last_name, phone, cuit,
+			cbu, cbu_alias, bank_name, renspa, establishment_name, establishment_location,
 			business_name, business_type, province, city, address, coordinates,
-			role, verification_documents, preferences
+			role, verification_level, is_active, is_verified, rating,
+			verification_documents, preferences
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 
-			CASE WHEN $13::float IS NOT NULL AND $14::float IS NOT NULL THEN POINT($13, $14) ELSE NULL END,
-			$15, $16, $17
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17, $18, 
+			CASE WHEN $19::float IS NOT NULL AND $20::float IS NOT NULL THEN POINT($19, $20) ELSE NULL END,
+			$21, $22, $23, $24, $25, $26, $27
 		)`
 
 	var lng, lat sql.NullFloat64
@@ -60,9 +63,11 @@ func (r *Repository) CreateUser(ctx context.Context, user *User) error {
 
 	_, err = r.db.ExecContext(ctx, query,
 		user.ID, user.Email, user.PasswordHash, user.FirstName, user.LastName,
-		user.Phone, user.CUIT, user.BusinessName, user.BusinessType,
-		user.Province, user.City, user.Address, lng, lat, user.Role,
-		verificationDocsJSON, preferencesJSON)
+		user.Phone, user.CUIT, user.CBU, user.CBUAlias, user.BankName,
+		user.RENSPA, user.EstablishmentName, user.EstablishmentLocation,
+		user.BusinessName, user.BusinessType, user.Province, user.City, user.Address,
+		lng, lat, user.Role, user.VerificationLevel, user.IsActive, user.IsVerified,
+		user.Rating, verificationDocsJSON, preferencesJSON)
 
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)

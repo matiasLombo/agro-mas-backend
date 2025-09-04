@@ -1,12 +1,17 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
+	"os"
 
 	"agro-mas-backend/internal/marketplace/users"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+// Create a logger instance for debugging
+var logger = log.New(os.Stdout, "[AUTH] ", log.LstdFlags|log.Lshortfile)
 
 type AuthHandler struct {
 	userService *users.Service
@@ -23,8 +28,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	var req users.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
-			"code":  "INVALID_REQUEST",
+			"error":   "Invalid request format",
+			"code":    "INVALID_REQUEST",
 			"details": err.Error(),
 		})
 		return
@@ -77,15 +82,21 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var req users.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
-			"code":  "INVALID_REQUEST",
+			"error":   "Invalid request format",
+			"code":    "INVALID_REQUEST",
 			"details": err.Error(),
 		})
 		return
 	}
 
+	// Log the authentication attempt
+	logger.Printf("Authentication attempt for email: %s", req.Email)
+
 	tokenResponse, user, err := h.userService.Authenticate(c.Request.Context(), &req)
 	if err != nil {
+		// Log the authentication error for debugging
+		logger.Printf("Authentication failed for email %s: %v", req.Email, err)
+
 		status := http.StatusUnauthorized
 		code := "AUTHENTICATION_FAILED"
 
@@ -105,6 +116,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		})
 		return
 	}
+
+	// Log successful authentication
+	logger.Printf("Authentication successful for user ID: %s, role: %s", user.ID, user.Role)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Login successful",
@@ -152,8 +166,8 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	var req users.UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
-			"code":  "INVALID_REQUEST",
+			"error":   "Invalid request format",
+			"code":    "INVALID_REQUEST",
 			"details": err.Error(),
 		})
 		return
@@ -162,8 +176,8 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	user, err := h.userService.UpdateUser(c.Request.Context(), userID.(uuid.UUID), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to update profile",
-			"code":  "PROFILE_UPDATE_FAILED",
+			"error":   "Failed to update profile",
+			"code":    "PROFILE_UPDATE_FAILED",
 			"details": err.Error(),
 		})
 		return
@@ -193,8 +207,8 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
-			"code":  "INVALID_REQUEST",
+			"error":   "Invalid request format",
+			"code":    "INVALID_REQUEST",
 			"details": err.Error(),
 		})
 		return
@@ -326,8 +340,8 @@ func (h *AuthHandler) UpgradeToSeller(c *gin.Context) {
 	var req users.SellerProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
-			"code":  "INVALID_REQUEST",
+			"error":   "Invalid request format",
+			"code":    "INVALID_REQUEST",
 			"details": err.Error(),
 		})
 		return
@@ -363,7 +377,7 @@ func (h *AuthHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware gin
 		auth.POST("/register", h.Register)
 		auth.POST("/login", h.Login)
 		auth.POST("/logout", h.Logout)
-		
+
 		// Protected routes
 		protected := auth.Group("/")
 		protected.Use(authMiddleware)
@@ -371,7 +385,7 @@ func (h *AuthHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware gin
 			protected.GET("/profile", h.GetProfile)
 			protected.PUT("/profile", h.UpdateProfile)
 			protected.POST("/change-password", h.ChangePassword)
-			
+
 			// Seller profile routes
 			protected.GET("/seller-profile", h.GetSellerProfile)
 			protected.GET("/seller-profile/check", h.CheckSellerProfileComplete)
