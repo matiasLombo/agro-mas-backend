@@ -71,6 +71,11 @@ func (s *ImageService) UploadProductImage(ctx context.Context, userID uuid.UUID,
 		},
 	}
 
+	// Check if storage client is available (nil in development mode)
+	if s.storageClient == nil {
+		return nil, fmt.Errorf("storage client not available in development mode")
+	}
+
 	uploadResult, err := s.storageClient.UploadFile(ctx, file, header, uploadOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image to storage: %w", err)
@@ -293,7 +298,7 @@ func (s *ImageService) updateProductImage(ctx context.Context, imageID uuid.UUID
 		argIndex++
 	}
 
-	query := fmt.Sprintf("UPDATE product_images SET %s WHERE id = $%d", 
+	query := fmt.Sprintf("UPDATE product_images SET %s WHERE id = $%d",
 		strings.Join(setParts, ", "), argIndex)
 	args = append(args, imageID)
 
@@ -305,6 +310,11 @@ func (s *ImageService) deleteProductImage(ctx context.Context, imageID uuid.UUID
 	query := `DELETE FROM product_images WHERE id = $1`
 	_, err := s.db.ExecContext(ctx, query, imageID)
 	return err
+}
+
+// UpdateImageMetadata updates metadata for an existing image
+func (s *ImageService) UpdateImageMetadata(ctx context.Context, imageID uuid.UUID, updates map[string]interface{}) error {
+	return s.updateProductImage(ctx, imageID, updates)
 }
 
 func (s *ImageService) setPrimaryImageIfNeeded(ctx context.Context, productID uuid.UUID) error {

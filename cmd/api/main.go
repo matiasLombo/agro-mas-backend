@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,23 +43,34 @@ func main() {
 	}
 	defer db.Close()
 
-	// Run migrations
+	// Run database migrations
 	if err := db.RunMigrations("./migrations"); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	// Initialize Google Cloud Storage (only in production)
+	// Initialize Google Cloud Storage (production or emulator)
 	ctx := context.Background()
 	var storageClient *gcloud.StorageClient
-	if cfg.IsProduction() && cfg.GoogleCloud.ProjectID != "" && cfg.GoogleCloud.StorageBucket != "" {
+	if cfg.GoogleCloud.ProjectID != "" && cfg.GoogleCloud.StorageBucket != "" {
 		var err error
-		storageClient, err = gcloud.NewStorageClient(ctx, cfg.GoogleCloud.ProjectID, cfg.GoogleCloud.CredentialsFile, cfg.GoogleCloud.StorageBucket)
+		if cfg.GoogleCloud.UseEmulator && cfg.GoogleCloud.EmulatorHost != "" {
+			// Use emulator for development
+			log.Printf("🔧 Using Google Cloud Storage Emulator at %s", cfg.GoogleCloud.EmulatorHost)
+			storageClient, err = gcloud.NewStorageClientWithEmulator(ctx, cfg.GoogleCloud.ProjectID, cfg.GoogleCloud.StorageBucket, cfg.GoogleCloud.EmulatorHost)
+		} else if cfg.IsProduction() {
+			// Use real Google Cloud Storage in production
+			log.Println("☁️  Using Google Cloud Storage")
+			storageClient, err = gcloud.NewStorageClient(ctx, cfg.GoogleCloud.ProjectID, cfg.GoogleCloud.CredentialsFile, cfg.GoogleCloud.StorageBucket)
+		}
+
 		if err != nil {
 			log.Fatalf("Failed to initialize Google Cloud Storage: %v", err)
 		}
-		defer storageClient.Close()
+		if storageClient != nil {
+			defer storageClient.Close()
+		}
 	} else {
-		log.Println("⚠️  Running in development mode - Google Cloud Storage disabled")
+		log.Println("⚠️  Google Cloud Storage disabled - no configuration provided")
 	}
 
 	// Initialize WhatsApp client
@@ -74,8 +87,8 @@ func main() {
 
 	// Initialize services
 	userService := users.NewService(userRepo, passwordManager, jwtManager)
-	productService := products.NewService(productRepo)
 	imageService := products.NewImageService(db.GetDB(), storageClient)
+	productService := products.NewService(productRepo, imageService)
 	transactionService := transactions.NewService(transactionRepo)
 	whatsappService := whatsapp.NewService(whatsappClient, db.GetDB())
 
@@ -86,6 +99,25 @@ func main() {
 	// Initialize Gin router
 	router := gin.New()
 
+	// Set multipart form memory limit (default is 32MB)
+	router.MaxMultipartMemory = 64 << 20 // 64 MiB
+
+	// Add debug middleware for PUT requests
+	router.Use(func(c *gin.Context) {
+		if c.Request.Method == "PUT" && strings.Contains(c.Request.URL.Path, "/products/") {
+			fmt.Printf("[DEBUG MIDDLEWARE] PUT request intercepted\n")
+			fmt.Printf("[DEBUG MIDDLEWARE] Path: %s\n", c.Request.URL.Path)
+			fmt.Printf("[DEBUG MIDDLEWARE] Content-Type: %s\n", c.Request.Header.Get("Content-Type"))
+			fmt.Printf("[DEBUG MIDDLEWARE] Content-Length: %s\n", c.Request.Header.Get("Content-Length"))
+
+			// Try to access the body
+			if c.Request.Body != nil {
+				fmt.Printf("[DEBUG MIDDLEWARE] Body is not nil\n")
+			}
+		}
+		c.Next()
+	})
+
 	// Add middleware
 	router.Use(middleware.LoggerMiddleware())
 	router.Use(middleware.ErrorHandler())
@@ -93,6 +125,53 @@ func main() {
 	router.Use(middleware.SecurityHeadersMiddleware())
 	router.Use(middleware.APIVersionMiddleware("v1"))
 	router.Use(middleware.ContentTypeMiddleware())
+
+	// JWT Test endpoint - REMOVE IN PRODUCTION
+	router.GET("/test-jwt", func(c *gin.Context) {
+		// Test JWT generation
+		testUserID := uuid.New()
+		tokenResponse, err := jwtManager.GenerateToken(
+			testUserID,
+			"test@example.com",
+			"seller",
+			nil,
+			nil,
+			1,
+			false,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "JWT generation failed",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Test JWT verification
+		claims, err := jwtManager.VerifyToken(tokenResponse.AccessToken)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "JWT verification failed",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"jwt_generation":   "success",
+			"jwt_verification": "success",
+			"token_info": gin.H{
+				"user_id":    claims.UserID,
+				"email":      claims.Email,
+				"role":       claims.Role,
+				"expires_at": claims.ExpiresAt.Time,
+			},
+			"config_info": gin.H{
+				"jwt_secret_length":    len(cfg.JWT.Secret),
+				"jwt_expiration_hours": cfg.JWT.ExpirationHours.Hours(),
+			},
+		})
+	})
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -115,6 +194,42 @@ func main() {
 		})
 	})
 
+	// Database Test endpoint - REMOVE IN PRODUCTION
+	router.GET("/test-db", func(c *gin.Context) {
+		// Test database connection
+		if err := db.HealthCheck(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":   "Database connection failed",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Test user lookup - create a test user first
+		testUser := &users.User{
+			ID:                uuid.New(),
+			Email:             "debug@test.com",
+			PasswordHash:      "test-hash",
+			FirstName:         "Debug",
+			LastName:          "User",
+			Role:              "seller",
+			IsActive:          true,
+			VerificationLevel: 1,
+		}
+
+		// Try to get existing test user first
+		existingUser, err := userService.GetUserByID(c.Request.Context(), testUser.ID)
+		if err != nil && existingUser == nil {
+			// User doesn't exist, this is expected
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"database":     "connected",
+			"user_service": "initialized",
+			"db_url":       cfg.GetDatabaseURL(),
+		})
+	})
+
 	// Environment test endpoint
 	router.GET("/env", func(c *gin.Context) {
 		environment := cfg.Environment
@@ -134,13 +249,51 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"environment":   environment,
-			"message":       message,
-			"color":         color,
-			"timestamp":     time.Now(),
-			"project_id":    cfg.GoogleCloud.ProjectID,
-			"gin_mode":      cfg.Server.GinMode,
-			"db_host":       cfg.Database.Host,
+			"environment": environment,
+			"message":     message,
+			"color":       color,
+			"timestamp":   time.Now(),
+			"project_id":  cfg.GoogleCloud.ProjectID,
+			"gin_mode":    cfg.Server.GinMode,
+			"db_host":     cfg.Database.Host,
+		})
+	})
+
+	// Debug Authentication endpoint - REMOVE IN PRODUCTION
+	router.POST("/debug-auth", func(c *gin.Context) {
+		var req struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid request format",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Step 1: Check if user exists
+		_, err := userService.GetUserByID(c.Request.Context(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")) // Test UUID
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"step":         "user_lookup_by_id",
+				"status":       "failed",
+				"error":        err.Error(),
+				"user_service": "initialized",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"debug_mode": true,
+			"jwt_config": gin.H{
+				"secret_length":    len(cfg.JWT.Secret),
+				"expiration_hours": cfg.JWT.ExpirationHours.Hours(),
+			},
+			"database": "connected",
+			"services": "initialized",
+			"message":  "Debug endpoint working",
 		})
 	})
 
@@ -149,12 +302,13 @@ func main() {
 
 	// Initialize middleware for protected routes
 	authMiddleware := middleware.AuthMiddleware(jwtManager)
+	optionalAuthMiddleware := middleware.OptionalAuthMiddleware(jwtManager)
 	sellerMiddleware := middleware.SellerOnly()
 	adminMiddleware := middleware.AdminOnly()
 
 	// Register routes
 	authHandler.RegisterRoutes(api, authMiddleware)
-	productsHandler.RegisterRoutes(api, authMiddleware, sellerMiddleware)
+	productsHandler.RegisterRoutes(api, authMiddleware, optionalAuthMiddleware, sellerMiddleware)
 
 	// Additional API endpoints
 	registerAdditionalRoutes(api, authMiddleware, adminMiddleware, userService, transactionService, whatsappService)
@@ -173,7 +327,7 @@ func main() {
 		log.Printf("🌾 Agro Mas API server starting on port %s", cfg.Server.Port)
 		log.Printf("📍 Environment: %s", cfg.Environment)
 		log.Printf("🔗 Health check: http://localhost:%s/health", cfg.Server.Port)
-		
+
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)
 		}
@@ -249,7 +403,7 @@ func getTransactions(service *transactions.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, _ := c.Get("user_id")
 		uid := userID.(uuid.UUID)
-		
+
 		req := &transactions.TransactionListRequest{}
 		if err := c.ShouldBindQuery(req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -288,7 +442,7 @@ func getTransaction(service *transactions.Service) gin.HandlerFunc {
 func createTransaction(service *transactions.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, _ := c.Get("user_id")
-		
+
 		var req transactions.CreateTransactionRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -364,7 +518,7 @@ func addTransactionReview(service *transactions.Service) gin.HandlerFunc {
 func createInquiry(service *transactions.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, _ := c.Get("user_id")
-		
+
 		var req transactions.CreateInquiryRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -413,7 +567,7 @@ func respondToInquiry(service *transactions.Service) gin.HandlerFunc {
 func createWhatsAppLink(service *whatsapp.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, _ := c.Get("user_id")
-		
+
 		var req whatsapp.CreateLinkRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -434,7 +588,7 @@ func getUserWhatsAppLinks(service *whatsapp.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, _ := c.Get("user_id")
 		linkType := c.Query("type")
-		
+
 		links, err := service.GetUserWhatsAppLinks(c.Request.Context(), userID.(uuid.UUID), linkType, 50)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
