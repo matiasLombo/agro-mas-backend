@@ -403,7 +403,10 @@ func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
 
 	} else {
 		// Handle regular JSON request
+		fmt.Printf("[DEBUG] Processing JSON request for update\n")
+		fmt.Printf("[DEBUG] Content-Type: %s\n", contentType)
 		if err := c.ShouldBindJSON(&req); err != nil {
+			fmt.Printf("[ERROR] Failed to bind JSON: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":   "Invalid request format",
 				"code":    "INVALID_REQUEST",
@@ -411,6 +414,7 @@ func (h *ProductsHandler) UpdateProduct(c *gin.Context) {
 			})
 			return
 		}
+		fmt.Printf("[DEBUG] Successfully parsed JSON request: %+v\n", req)
 	}
 
 	var product *products.Product

@@ -120,9 +120,33 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// Log successful authentication
 	logger.Printf("Authentication successful for user ID: %s, role: %s", user.ID, user.Role)
 
+	userResponse := user.ToResponse()
+	logger.Printf("Login response user data - Province: %v, City: %v, Address: %v",
+		func() interface{} {
+			if userResponse.Province != nil {
+				return *userResponse.Province
+			} else {
+				return "nil"
+			}
+		}(),
+		func() interface{} {
+			if userResponse.City != nil {
+				return *userResponse.City
+			} else {
+				return "nil"
+			}
+		}(),
+		func() interface{} {
+			if userResponse.Address != nil {
+				return *userResponse.Address
+			} else {
+				return "nil"
+			}
+		}())
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Login successful",
-		"user":    user.ToResponse(),
+		"user":    userResponse,
 		"token":   tokenResponse,
 	})
 }

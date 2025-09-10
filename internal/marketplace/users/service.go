@@ -12,12 +12,12 @@ import (
 )
 
 var (
-	ErrUserNotFound     = errors.New("user not found")
-	ErrUserExists       = errors.New("user already exists")
-	ErrInvalidPassword  = errors.New("invalid password")
-	ErrUserNotActive    = errors.New("user account is not active")
-	ErrInvalidRole      = errors.New("invalid user role")
-	ErrCUITExists       = errors.New("CUIT already registered")
+	ErrUserNotFound    = errors.New("user not found")
+	ErrUserExists      = errors.New("user already exists")
+	ErrInvalidPassword = errors.New("invalid password")
+	ErrUserNotActive   = errors.New("user account is not active")
+	ErrInvalidRole     = errors.New("invalid user role")
+	ErrCUITExists      = errors.New("CUIT already registered")
 )
 
 type Service struct {
@@ -91,31 +91,32 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*User
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
+	// Debug: log the incoming location data
+	fmt.Printf("[DEBUG] Location data received: Address='%s', ProvinceName='%s', SettlementName='%s'\n",
+		req.Address, req.ProvinceName, req.SettlementName)
+
 	// Create user object
 	user := &User{
-		ID:           uuid.New(),
-		Email:        strings.ToLower(req.Email),
-		PasswordHash: passwordHash,
-		FirstName:    req.FirstName,
-		LastName:     req.LastName,
-		Phone:        req.Phone,
-		CUIT:         req.CUIT,
-		CBU:          req.CBU,
-		CBUAlias:     req.CBUAlias,
-		BankName:     req.BankName,
-		BusinessName: req.BusinessName,
-		BusinessType: req.BusinessType,
-		Province:     req.Province,
-		City:         req.City,
-		Address:      req.Address,
-		Coordinates:  req.Coordinates,
-		Role:         req.Role,
+		ID:                uuid.New(),
+		Email:             strings.ToLower(req.Email),
+		PasswordHash:      passwordHash,
+		FirstName:         req.FirstName,
+		LastName:          req.LastName,
+		Phone:             req.Phone,
+		CUIT:              req.CUIT,
+		CBU:               req.CBU,
+		CBUAlias:          req.CBUAlias,
+		BankName:          req.BankName,
+		BusinessName:      req.BusinessName,
+		BusinessType:      req.BusinessType,
+		Coordinates:       req.Coordinates,
+		Role:              req.Role,
 		VerificationLevel: 0,
-		IsActive:     true,
-		IsVerified:   false,
-		Rating:       0.0,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		IsActive:          true,
+		IsVerified:        false,
+		Rating:            0.0,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
 		Preferences: &UserPreferences{
 			NotificationEmail:    true,
 			NotificationWhatsApp: true,
@@ -124,6 +125,20 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*User
 			Currency:             "ARS",
 			PrivacyLevel:         "limited",
 		},
+	}
+
+	// Set location fields with proper nil checks for empty strings
+	if req.Address != "" {
+		user.Address = &req.Address
+	}
+	if req.ProvinceName != "" {
+		user.Province = &req.ProvinceName
+	}
+	if req.DepartmentName != nil && *req.DepartmentName != "" {
+		user.Department = req.DepartmentName
+	}
+	if req.SettlementName != "" {
+		user.City = &req.SettlementName
 	}
 
 	// Set initial verification level based on available information
@@ -252,6 +267,9 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, req *UpdateUserR
 	}
 	if req.Province != nil {
 		updates["province"] = *req.Province
+	}
+	if req.Department != nil {
+		updates["department"] = *req.Department
 	}
 	if req.City != nil {
 		updates["city"] = *req.City
